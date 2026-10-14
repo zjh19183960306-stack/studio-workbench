@@ -1,0 +1,650 @@
+"""MODULE A worker: motion_generate_queue -> local H3 (ComfyUI :8192, GPU only).
+Appearance/clothes only from person image; control video (depth/white preview)
+supplies motion only. No cloud API. Never logs media names or paths."""
+import fcntl, json, os, time, threading, subprocess, shutil, uuid, traceback
+from pathlib import Path
+import requests, websocket
+import motion_preview as m
+import motion_h3_bridge as bridge
+from worker_common import atomic, ID, gpu_present
+HERE = Path(__file__).resolve().parent
+R = HERE.parent
+URL = 'http://127.0.0.1:8192'
+WS = 'ws://127.0.0.1:8192/ws?clientId='
+STATUS = HERE/'motion_h3_worker_status.json'
+WORKFLOW = R/'char_anim_h3'/'r2v_api.json'
+INPUT_SUB = '_h3work'            # skipped by char_anim.catalog
+OUT_ROOT = HERE/'outputs'/'motion_generate'
+STEPS = ['准备', '加载模型', '采样', '解码', '保存', '完成']
+LOG = R/'motion_h3_worker.log'
+
+def log(msg):
+    with open(LOG, 'a', encoding='utf-8') as f: f.write(time.strftime('%F %T ')+msg+'\n')
+
+def weights_ok():
+    try:
+        v = json.loads((R/'char_anim_h3'/'verified.json').read_text())
+        need = ('vv','av','te','ref')
+        if not all(k in v and Path(v[k]['path']).is_file() and Path(v[k]['path']).stat().st_size == v[k]['size'] for k in need):
+            return False
+        # Fun ControlNet Union patch required for depth-driven H3
+        cn = v.get('cn') or {}
+        cn_path = Path(cn.get('path') or (R/'ComfyUI'/'models'/'model_patches'/'minimax_h3_fun_controlnet_union_pruned_int8_convrot.safetensors'))
+        if cn.get('size'):
+            return cn_path.is_file() and cn_path.stat().st_size == cn['size']
+        return cn_path.is_file() and cn_path.stat().st_size > 1_000_000_000
+    except (OSError, ValueError, KeyError): return False
+
+def comfy_stats():
+    try: return requests.get(URL+'/system_stats', timeout=5).json()
+    except (requests.RequestException, ValueError): return None
+
+def comfy_idle():
+    try:
+        q = requests.get(URL+'/queue', timeout=5).json()
+        return not q.get('queue_running') and not q.get('queue_pending')
+    except (requests.RequestException, ValueError): return False
+
+class Adapter:
+    """Local-only adapter for motion_h3_bridge.dispatch_one."""
+    def probe(self):
+        s = comfy_stats(); cuda = bool(s and any(d.get('type') == 'cuda' for d in s.get('devices', [])))
+        return {'gpu': gpu_present() and cuda, 'ready': weights_ok(), 'idle': cuda and comfy_idle(),
+                'control_video_input': True, 'engine': 'minimax_h3_ref2va_local'}
+    def enqueue(self, manifest):
+        # Durable + idempotent: the queue json itself is the record (keyed by id).
+        return {'accepted': manifest.get('engine') == 'minimax_h3_ref2va_local'
+                and manifest.get('appearance_source') == 'images_only'
+                and manifest.get('motion_source') == 'approved_controls_only'}
+
+def is_cancelled(p):
+    try: return json.loads(p.read_text(encoding='utf-8')).get('state') == 'cancelled'
+    except (OSError, ValueError): return True  # record removed = cancelled
+
+def setp(p, d, **kw):
+    if is_cancelled(p) and kw.get('state') != 'cancelled': raise RuntimeError('E_H3_CANCELLED')
+    d.update(updated_at=time.time(), steps=STEPS, **kw); atomic(p, d)
+
+def upload(path, name, folder):
+    with open(path, 'rb') as f:
+        r = requests.post(URL+'/upload/image', files={'image': (name, f, 'application/octet-stream')},
+                          data={'type': 'input', 'subfolder': folder, 'overwrite': 'true'}, timeout=600)
+    r.raise_for_status(); d = r.json(); return d['subfolder']+'/'+d['name']
+
+def probe_video(path):
+    r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_packets',
+                        '-show_entries', 'stream=width,height,nb_read_packets,r_frame_rate', '-of', 'json', str(path)],
+                       capture_output=True, text=True, timeout=120)
+    s = json.loads(r.stdout)['streams'][0]
+    num, den = (s.get('r_frame_rate') or '24/1').split('/'); fps = float(num)/float(den or 1)
+    return int(s['width']), int(s['height']), int(s['nb_read_packets']), fps
+
+def plan(w, h, frames, fps, area_scale=1.0):
+    """Native H3 canvas (~1MP): 768 short-edge, area cap 768*1344, axes multiple of 32.
+    Official docs: generate at native, upscale separately for Douyin 1080x1920.
+    Frame count: ceil to 17k+5 at 24fps (matches align_frame_count).
+    area_scale < 1.0 only for OOM step-down below native.
+    """
+    import math
+    secs = frames / max(fps, 1e-6)
+    n = int(round(max(secs, 0.0) * 24))
+    n = max(5, n)
+    while n % 17 != 5:  # ceil to 17k+5 (official align_frame_count)
+        n += 1
+    base = float(os.environ.get("H3_BASE_SHORT", "768"))
+    max_pixels = float(os.environ.get("H3_MAX_PIXELS", str(768 * 1344)))
+    ratio = (w / max(h, 1e-6)) if w and h else 9 / 16
+    if ratio >= 1.0:
+        nom_w, nom_h = base * ratio, base
+    else:
+        nom_w, nom_h = base, base / ratio
+    if nom_w * nom_h > max_pixels:
+        s = math.sqrt(max_pixels / (nom_w * nom_h))
+        nom_w, nom_h = nom_w * s, nom_h * s
+    if area_scale < 1.0:
+        s2 = math.sqrt(max(0.15, float(area_scale)))
+        nom_w, nom_h = nom_w * s2, nom_h * s2
+    W = max(256, int(round(nom_w / 32) * 32))
+    H = max(256, int(round(nom_h / 32) * 32))
+    return W, H, n
+
+def free_vram():
+    """Unload Comfy models + free CUDA cache between slots/segments (memory-safe)."""
+    try:
+        requests.post(URL+'/free', json={'unload_models': True, 'free_memory': True}, timeout=60)
+    except Exception as e:
+        log('free_vram warn '+str(e)[:120])
+    try:
+        requests.post(URL+'/interrupt', timeout=5)
+    except Exception:
+        pass
+
+
+def has_audio(path):
+    r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'a:0',
+                        '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', str(path)],
+                       capture_output=True, text=True, timeout=120)
+    return r.returncode == 0 and 'audio' in (r.stdout or '')
+
+def probe_duration(path):
+    r = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                        '-of', 'json', str(path)], capture_output=True, text=True, timeout=120)
+    if r.returncode != 0:
+        raise RuntimeError('E_H3_PROBE')
+    return float(json.loads(r.stdout)['format']['duration'])
+
+def driver_video_path(owner, motion_ids):
+    """Resolve original driver RGB video from motion preview video_id. Never use depth/white."""
+    if not motion_ids:
+        return None
+    mid = motion_ids[0]
+    if not isinstance(mid, str) or ':' not in mid:
+        return None
+    jid = mid.split(':', 1)[0]
+    try:
+        d = m.read_owned(m.QUEUE, jid, owner)
+    except ValueError:
+        return None
+    vid = d.get('video_id')
+    if not isinstance(vid, str):
+        return None
+    c = m.catalog()
+    v = c.get(vid)
+    if not v or v.get('kind') != 'video':
+        return None
+    p = Path(v['path'])
+    if not p.is_file() or p.is_symlink():
+        return None
+    return p
+
+def mux_orig_audio(result_mp4, driver_mp4, out_mp4):
+    """Keep result video frames; replace audio with driver. Trim/pad to result duration."""
+    result_mp4, driver_mp4, out_mp4 = Path(result_mp4), Path(driver_mp4), Path(out_mp4)
+    if out_mp4.exists():
+        out_mp4.unlink()
+    if not has_audio(driver_mp4):
+        raise RuntimeError('E_H3_NO_DRIVER_AUDIO')
+    dur = probe_duration(result_mp4)
+    cmd = ['ffmpeg', '-y', '-i', str(result_mp4), '-i', str(driver_mp4),
+           '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-af', 'apad',
+           '-t', f'{dur:.6f}', '-c:a', 'aac', '-b:a', '192k',
+           '-movflags', '+faststart', str(out_mp4)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if r.returncode != 0 or not out_mp4.is_file() or out_mp4.stat().st_size < 1000:
+        raise RuntimeError('E_H3_MUX_FAIL')
+    try:
+        os.chmod(out_mp4, 0o600)
+    except OSError:
+        pass
+    return out_mp4
+
+
+def segment_sec():
+    try:
+        return max(5, min(15, int(os.environ.get('H3_SEGMENT_SEC', '15'))))
+    except ValueError:
+        return 15
+
+def split_control_video(src, work_dir, seg_sec=None):
+    """If duration > seg_sec, cut into <=seg_sec clips with 1s overlap (for xfade). Else [src]."""
+    seg_sec = segment_sec() if seg_sec is None else seg_sec
+    overlap = float(os.environ.get("H3_SEGMENT_OVERLAP", "1.0"))
+    src = Path(src)
+    dur = probe_duration(src)
+    if dur <= seg_sec + 0.05:
+        return [src], False, dur
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    parts = []
+    t = 0.0
+    i = 0
+    step = max(seg_sec - overlap, 1.0)
+    while t < dur - 0.05:
+        part = work_dir / ("ctl_seg_%03d.mp4" % i)
+        length = min(seg_sec, max(dur - t, 0.1))
+        cmd = ["ffmpeg", "-y", "-ss", "%.3f" % t, "-i", str(src), "-t", "%.3f" % length,
+               "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "18",
+               "-movflags", "+faststart", str(part)]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if r.returncode != 0 or not part.is_file() or part.stat().st_size < 1000:
+            raise RuntimeError("E_H3_SEGMENT_SPLIT")
+        parts.append(part)
+        t += step
+        i += 1
+        if i > 500:
+            raise RuntimeError("E_H3_SEGMENT_SPLIT")
+    return parts, True, dur
+
+
+def concat_mp4s(parts, out_mp4):
+    """Concat segment mp4s; short xfade (0.5s) when >=2 parts, else copy."""
+    out_mp4 = Path(out_mp4)
+    parts = [Path(p) for p in parts]
+    if len(parts) == 1:
+        shutil.copy2(parts[0], out_mp4)
+        return out_mp4
+    xfade = float(os.environ.get("H3_XFADE_SEC", "0.5"))
+    n = len(parts)
+    cmd = ["ffmpeg", "-y"]
+    for p in parts:
+        cmd += ["-i", str(p)]
+    durs = [probe_duration(p) for p in parts]
+    filters = []
+    last = "[0:v]"
+    offset = 0.0
+    for i in range(1, n):
+        offset += max(durs[i - 1] - xfade, 0.01)
+        outlab = "[v%x]" % i if i < n - 1 else "[vout]"
+        filters.append("%s[%d:v]xfade=transition=fade:duration=%.3f:offset=%.3f%s" % (last, i, xfade, offset, outlab))
+        last = outlab
+    filt = ";".join(filters)
+    cmd += ["-filter_complex", filt, "-map", "[vout]",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "18",
+            "-an", "-movflags", "+faststart", str(out_mp4)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    if r.returncode != 0 or not out_mp4.is_file() or out_mp4.stat().st_size < 1000:
+        work = out_mp4.parent
+        listf = work / (out_mp4.stem + "_concat.txt")
+        lines = ["file '%s'" % str(Path(p).resolve()).replace("'", "'\''") for p in parts]
+        listf.write_text(chr(10).join(lines) + chr(10), encoding="utf-8")
+        cmd2 = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listf),
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "18",
+                "-an", "-movflags", "+faststart", str(out_mp4)]
+        r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=1800)
+        listf.unlink(missing_ok=True)
+        if r2.returncode != 0 or not out_mp4.is_file() or out_mp4.stat().st_size < 1000:
+            raise RuntimeError("E_H3_SEGMENT_CONCAT")
+    return out_mp4
+
+
+
+PROMPT = ("Use <Picture 1> as the only source for the character identity, face, hair, body proportions, clothes, colors and accessories. "
+          "Animate that exact character. Motion and pose follow the Fun ControlNet depth/control video (not a reference picture). "
+          "Never copy clothes, face, textures or background from the control video. Render the character from <Picture 1>. "
+          "Stable outfit throughout, neutral background, fixed camera, no speech.")
+ANTI = (" Strict anti-bleed: the outfit, colors and accessories must exactly match <Picture 1> in every frame; "
+        "do not invent, add or swap any clothing; ignore clothing silhouette from the depth control except body pose/motion.")
+
+MULTI = ("{pics} show the SAME single character (e.g. close-up, turnaround, full-body detail); "
+         "treat them together as one character reference and render exactly one person. ")
+MAX_REFS = 9  # MiniMaxH3ReferenceToVideo ref_images autogrow max
+
+
+def graph(img, vid, prefix, W, H, n, kind, anti, seed):
+    """Build API graph: character images -> Ref2VA refs; depth -> Fun ControlNet (not ref_video)."""
+    imgs = list(img) if isinstance(img, (list, tuple)) else [img]
+    imgs = imgs[:MAX_REFS]
+    g = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+    g["6"]["inputs"]["image"] = imgs[0]
+    g["7"]["inputs"]["file"] = vid  # control video for Fun ControlNet only
+    if len(imgs) > 1:
+        pics = ", ".join("<Picture %d>" % (i + 1) for i in range(len(imgs)))
+        pr = MULTI.format(pics=pics) + PROMPT.replace("<Picture 1>", pics)
+        if anti:
+            pr = pr + ANTI.replace("<Picture 1>", pics)
+    else:
+        pr = PROMPT + (ANTI if anti else "")
+    g["9"]["inputs"].update(prompt=pr, width=W, height=H, length=n, ref_image_size="max")
+    i9 = g["9"]["inputs"]
+    for k in list(i9):
+        if "ref_video" in k:
+            i9.pop(k)
+    if "ref_image_0" in i9:
+        i9["ref_images.ref_image_0"] = i9.pop("ref_image_0")
+    for j, nm in enumerate(imgs[1:], 1):
+        nid = "6_%d" % j
+        g[nid] = {"class_type": "LoadImage", "inputs": {"image": nm}}
+        i9["ref_images.ref_image_%d" % j] = [nid, 0]
+    if "20" in g:
+        g["20"]["inputs"]["strength"] = float(os.environ.get("H3_CN_STRENGTH", "1.0"))
+        g["20"]["inputs"]["end_percent"] = float(os.environ.get("H3_CN_END", "0.6"))
+        g["20"]["inputs"]["start_percent"] = 0.0
+    if "13" in g:
+        g["13"]["inputs"]["scheduler"] = "simple"
+        g["13"]["inputs"]["steps"] = int(os.environ.get("H3_STEPS", "20"))
+    g["10"]["inputs"]["noise_seed"] = seed
+    g["18"]["inputs"]["filename_prefix"] = prefix
+    return g
+
+
+NODE_STEP = {'2': '加载模型', '3': '加载模型', '4': '加载模型', '5': '加载模型', '19': '加载模型', '20': '加载模型', '9': '编码参考',
+             '14': '采样', '15': '解码', '16': '解码', '17': '保存', '18': '保存'}
+
+
+def align_frame_count_ceil(n):
+    n = max(5, int(n))
+    while n % 17 != 5:
+        n += 1
+    return n
+
+def prepare_control_video(src, dest, W, H, n_frames):
+    """Resample control to 24fps, scale to WxH, exact n_frames (17k+5). Required by Fun ControlNet."""
+    src, dest = Path(src), Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    vf = ("fps=24,scale=%d:%d:force_original_aspect_ratio=decrease,"
+          "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,"
+          "tpad=stop_mode=clone:stop_duration=2") % (W, H, W, H)
+    cmd = ["ffmpeg", "-y", "-i", str(src), "-an", "-vf", vf,
+           "-frames:v", str(n_frames), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-preset", "veryfast", "-crf", "18", "-movflags", "+faststart", str(dest)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if r.returncode != 0 or not dest.is_file() or dest.stat().st_size < 1000:
+        raise RuntimeError("E_H3_CONTROL_PREP")
+    pw, ph, pf, pfp = probe_video(dest)
+    if abs(pw - W) > 1 or abs(ph - H) > 1:
+        raise RuntimeError("E_H3_CONTROL_PREP")
+    return dest
+
+def upscale_to_delivery(src, dest, target_w=1080, target_h=1920):
+    """Post-gen Douyin delivery upscale via ffmpeg lanczos (no local VSR model installed).
+    Official: gen at native ~1MP then upscale separately.
+    """
+    src, dest = Path(src), Path(dest)
+    vf = ("scale=%d:%d:force_original_aspect_ratio=decrease:flags=lanczos,"
+          "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1") % (target_w, target_h, target_w, target_h)
+    cmd = ["ffmpeg", "-y", "-i", str(src), "-vf", vf, "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-preset", "medium", "-crf", "16", "-c:a", "copy", "-movflags", "+faststart", str(dest)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    if r.returncode != 0 or not dest.is_file() or dest.stat().st_size < 1000:
+        cmd = ["ffmpeg", "-y", "-i", str(src), "-vf", vf, "-c:v", "libx264", "-pix_fmt", "yuv420p",
+               "-preset", "medium", "-crf", "16", "-an", "-movflags", "+faststart", str(dest)]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0 or not dest.is_file() or dest.stat().st_size < 1000:
+            raise RuntimeError("E_H3_UPSCALE")
+    try:
+        os.chmod(dest, 0o600)
+    except OSError:
+        pass
+    return dest
+
+DELIVERY_W = int(os.environ.get("H3_DELIVERY_W", "1080"))
+DELIVERY_H = int(os.environ.get("H3_DELIVERY_H", "1920"))
+
+
+def run_one(p, d, idx, total, img_path, ctl, out_dir):
+    cid = uuid.uuid4().hex; folder = INPUT_SUB+'/'+d['id']
+    base_pct = idx*100.0/total; span = 100.0/total
+    def prog(stage, frac, extra=''):
+        pct = int(base_pct+span*frac); pct = min(pct, 99)
+        label = f'第 {idx+1}/{total} 条' if total > 1 else ''
+        setp(p, d, state='running', inference_started=True, stage=stage, progress=pct,
+             message=('生成中 '+label+' · '+stage+(' '+extra if extra else '')+f' · {pct}%').replace('  ', ' '))
+    prog('准备', 0.01)
+    seg_dir = out_dir / ('_segs_' + str(idx))
+    try:
+        parts, split, src_dur = split_control_video(ctl['path'], seg_dir)
+    except Exception:
+        raise RuntimeError('E_H3_SEGMENT_SPLIT')
+    if split:
+        log('job '+d['id']+' split control dur=%.2fs segs=%d seg_sec=%d' % (src_dur, len(parts), segment_sec()))
+        prog('准备', 0.02, '长视频切 %d 段' % len(parts))
+    seg_slots = []
+    nseg = max(len(parts), 1)
+    for si, part_path in enumerate(parts):
+        seg_ctl = dict(ctl)
+        seg_ctl['path'] = Path(part_path)
+        frac0 = si / nseg
+        frac1 = (si + 1) / nseg
+        def prog_seg(stage, frac, extra='', _f0=frac0, _f1=frac1, _si=si):
+            local = _f0 + (_f1 - _f0) * frac
+            extra2 = (extra + ' · 段%d/%d' % (_si + 1, nseg)) if nseg > 1 else extra
+            prog(stage, local, extra2)
+        prog_seg('准备', 0.01)
+        _ips = list(img_path) if isinstance(img_path, (list, tuple)) else [img_path]
+        ci = [upload(ip, 'person%d' % j + Path(ip).suffix.lower(), folder) for j, ip in enumerate(_ips)]
+        ci = ci if len(ci) > 1 else ci[0]
+        prefix = 'motion_generate_h3/'+d['id']+'/r'+str(idx)+'_s'+str(si)
+        vprobe = probe_video(seg_ctl['path'])
+        # OOM step-down below native 1MP (official canvas); control re-prepared each attempt
+        area_scales = (1.0, 0.55, 0.35)
+        last_err = None
+        for attempt, ascale in enumerate(area_scales):
+            W, H, n = plan(*vprobe, area_scale=ascale)
+            prep = seg_dir / ('ctl_prep_%d_a%d.mp4' % (si, attempt))
+            prepare_control_video(seg_ctl['path'], prep, W, H, n)
+            vi = upload(prep, 'control_s%d_a%d.mp4' % (si, attempt), folder)
+            free_vram()
+            if attempt:
+                prog_seg('准备', 0.02, '显存不足，降到 %dx%d 重试' % (W, H))
+                log('job %s seg%d OOM retry attempt=%d -> %dx%d n=%d' % (d['id'], si, attempt, W, H, n))
+            cid = uuid.uuid4().hex
+            ws = websocket.create_connection(WS+cid, timeout=30)
+            try:
+                r = requests.post(URL+'/prompt', json={'prompt': graph(ci, vi, prefix, W, H, n, seg_ctl['kind'], d['anti_bleed'], 123456+idx*100+si+attempt*17), 'client_id': cid}, timeout=60)
+                if r.status_code != 200:
+                    log('prompt rejected '+str(r.status_code)+' '+r.text[:800]); raise RuntimeError('E_H3_PROMPT_REJECTED')
+                node_errors = (r.json() or {}).get('node_errors') or {}
+                if node_errors:
+                    log('prompt node_errors '+json.dumps(node_errors, ensure_ascii=False)[:800]); raise RuntimeError('E_H3_PROMPT_REJECTED')
+                pid = r.json()['prompt_id']; prog_seg('加载模型', 0.03)
+                stage = '加载模型'; ws.settimeout(20); deadline = time.time()+4*3600; last = 0
+                oom = False
+                while time.time() < deadline:
+                    try: raw = ws.recv()
+                    except websocket.WebSocketTimeoutException:
+                        if not gpu_present(): raise RuntimeError('E_H3_GPU_LOST')
+                        h = requests.get(URL+'/history/'+pid, timeout=15).json().get(pid)
+                        if h and h.get('status', {}).get('completed'): break
+                        if h and h.get('status', {}).get('status_str') == 'error':
+                            raw_err = json.dumps(h.get('status'), ensure_ascii=False)
+                            if 'OutOfMemory' in raw_err or 'out of memory' in raw_err.lower():
+                                oom = True; break
+                            raise RuntimeError('E_H3_EXECUTION')
+                        continue
+                    if not isinstance(raw, str): continue
+                    msg = json.loads(raw); t = msg.get('type'); data = msg.get('data', {})
+                    if data.get('prompt_id') not in (None, pid): continue
+                    if t == 'executing':
+                        node = data.get('node')
+                        if node is None: break
+                        stage = NODE_STEP.get(str(node), stage)
+                        frac = {'加载模型': 0.05, '编码参考': 0.08, '采样': 0.10, '解码': 0.90, '保存': 0.97}.get(stage, 0.05)
+                        prog_seg(stage, frac)
+                    elif t == 'progress' and stage == '采样' and time.time()-last > 2:
+                        v, mx = int(data.get('value', 0)), int(data.get('max', 1)) or 1
+                        last = time.time(); prog_seg('采样', 0.10+0.80*v/mx, f'{v}/{mx} 步')
+                    elif t == 'execution_error':
+                        log('execution_error '+json.dumps({k: data.get(k) for k in ('node_id', 'node_type', 'exception_type', 'exception_message')}, ensure_ascii=False)[:1500])
+                        et = str(data.get('exception_type') or '') + str(data.get('exception_message') or '')
+                        if 'OutOfMemory' in et or 'out of memory' in et.lower():
+                            oom = True; break
+                        raise RuntimeError('E_H3_EXECUTION')
+                    elif t == 'execution_interrupted': raise RuntimeError('E_H3_INTERRUPTED')
+                else:
+                    requests.post(URL+'/interrupt', timeout=10); raise RuntimeError('E_H3_TIMEOUT')
+                if oom:
+                    last_err = 'OOM@%dx%d' % (W, H)
+                    try: requests.post(URL+'/interrupt', timeout=5)
+                    except Exception: pass
+                    free_vram()
+                    continue
+                h = requests.get(URL+'/history/'+pid, timeout=15).json()[pid]
+                if h.get('status', {}).get('status_str') == 'error':
+                    raw_err = json.dumps(h.get('status'), ensure_ascii=False)
+                    if 'OutOfMemory' in raw_err or 'out of memory' in raw_err.lower():
+                        last_err = 'OOM@%dx%d' % (W, H); free_vram(); continue
+                    raise RuntimeError('E_H3_EXECUTION')
+                o = h['outputs']['18']; files = o.get('images', [])+o.get('videos', [])+o.get('gifs', [])
+                f = next((x for x in files if x['filename'].endswith('.mp4')), None)
+                if not f: raise RuntimeError('E_H3_NO_OUTPUT')
+                src = (R/'outputs'/f.get('subfolder', '')/f['filename']).resolve()
+                if not src.is_relative_to((R/'outputs'/'motion_generate_h3').resolve()): raise RuntimeError('E_H3_OUTPUT_PATH')
+                seg_slot = out_dir / ('result-%d-seg%d.mp4' % (idx, si))
+                shutil.move(str(src), str(seg_slot))
+                seg_slots.append(seg_slot)
+                if attempt:
+                    log('job %s seg%d recovered after OOM at %dx%d' % (d['id'], si, W, H))
+                break
+            finally:
+                try: ws.close()
+                except Exception: pass
+        else:
+            raise RuntimeError('E_H3_OOM')
+        # new client id per segment to avoid ws reuse issues
+        cid = uuid.uuid4().hex
+    shutil.rmtree(R/'inputs'/INPUT_SUB/d['id'], ignore_errors=True)
+    slot = 'result-'+str(idx)+'.mp4'
+    final = out_dir / slot
+    if len(seg_slots) == 1:
+        seg_slots[0].replace(final)
+    else:
+        prog('保存', 0.98, '拼接 %d 段' % len(seg_slots))
+        concat_mp4s(seg_slots, final)
+        for s in seg_slots:
+            s.unlink(missing_ok=True)
+    shutil.rmtree(seg_dir, ignore_errors=True)
+    return slot
+
+
+def process(p):
+    d = json.loads(p.read_text(encoding='utf-8'))
+    if d.get('state') not in ('queued', 'running'): return False
+    try:
+        controls = m.resolve_controls(d['owner'], d['motion_ids']); c = m.catalog()
+        # Prefer depth controls only when any depth is selected (skip white/灰模).
+        _depths = [x for x in controls if x.get('kind') == 'depth']
+        if _depths:
+            controls = _depths  # DEPTH_PREFERRED
+        images = [x['path'] for x in m.resolve_images(d['owner'], d['image_ids'])]
+        if len(images) != len(d['image_ids']) or not controls: raise RuntimeError('E_H3_INPUT_MISSING')
+        out = OUT_ROOT/d['id']; out.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if d.get('per_image'): pairs = [(im, ct) for im in images for ct in controls]
+        else: pairs = [(images[:MAX_REFS], ct) for ct in controls]  # MULTIREF: one character -> one video per motion
+        slots = []
+        for i, (im, ct) in enumerate(pairs):
+            if is_cancelled(p): raise RuntimeError('E_H3_CANCELLED')
+            free_vram()  # sequential slots + free VRAM between
+            slots.append(run_one(p, d, i, len(pairs), im, ct, out))
+            free_vram()
+        shutil.rmtree(R/'outputs'/'motion_generate_h3'/d['id'], ignore_errors=True)
+        # Prefer original driver audio on primary slots; keep H3 AI audio as secondary *-aiaudio.mp4.
+        # Never feed original RGB frames into H3 — audio mux only after save.
+        driver = driver_video_path(d['owner'], d.get('motion_ids') or [])
+        final_slots = []
+        ai_slots = []
+        mux_ok = 0
+        if driver is not None and has_audio(driver):
+            for slot in slots:
+                ai_name = slot.replace('.mp4', '-aiaudio.mp4')
+                ai_path = out / ai_name
+                primary = out / slot
+                try:
+                    primary.replace(ai_path)  # move AI aside
+                    mux_orig_audio(ai_path, driver, primary)
+                    final_slots.append(slot)
+                    ai_slots.append(ai_name)
+                    mux_ok += 1
+                except Exception as me:
+                    log('mux skip '+slot+' '+str(me)[:200])
+                    # restore AI as primary if mux failed
+                    if ai_path.is_file() and not primary.is_file():
+                        ai_path.replace(primary)
+                    final_slots.append(slot)
+        else:
+            final_slots = list(slots)
+            if driver is None:
+                log('mux skip: no driver video')
+            else:
+                log('mux skip: driver has no audio')
+        # Upscale native ~1MP results to Douyin delivery ~1080x1920 (ffmpeg lanczos)
+        delivery_slots = []
+        native_slots = []
+        for slot in final_slots:
+            primary = out / slot
+            native_name = slot.replace('.mp4', '-native.mp4')
+            delivery = out / slot
+            native_path = out / native_name
+            try:
+                if primary.is_file():
+                    primary.replace(native_path)
+                    upscale_to_delivery(native_path, delivery, DELIVERY_W, DELIVERY_H)
+                    # restore audio onto upscaled if mux put audio on native
+                    if has_audio(native_path) and not has_audio(delivery):
+                        tmpu = out / (slot + '.aud.mp4')
+                        cmd = ['ffmpeg', '-y', '-i', str(delivery), '-i', str(native_path),
+                               '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'copy',
+                               '-shortest', '-movflags', '+faststart', str(tmpu)]
+                        rr = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                        if rr.returncode == 0 and tmpu.is_file():
+                            delivery.unlink(missing_ok=True); tmpu.replace(delivery)
+                    delivery_slots.append(slot)
+                    native_slots.append(native_name)
+                    # record dims without reading pixels
+                    try:
+                        dw, dh, df, _ = probe_video(delivery)
+                        nw, nh, nf, _ = probe_video(native_path)
+                        d.setdefault('render_meta', {})
+                        d['render_meta'][slot] = {
+                            'native_wh': [nw, nh], 'delivery_wh': [dw, dh],
+                            'native_frames': nf, 'delivery_frames': df,
+                            'fps': 24, 'engine': 'minimax_h3_ref2va+fun_controlnet',
+                            'control': 'MiniMaxH3FunControlNetApply',
+                            'upscale': 'ffmpeg_lanczos',
+                        }
+                    except Exception:
+                        pass
+            except Exception as ue:
+                log('upscale skip '+slot+' '+str(ue)[:200])
+                if native_path.is_file() and not primary.is_file():
+                    native_path.replace(primary)
+                delivery_slots.append(slot)
+        if not delivery_slots:
+            delivery_slots = list(final_slots)
+        all_slots = delivery_slots + native_slots + ai_slots
+        urls = ['/api/motion-preview/generation-jobs/'+d['id']+'/results/'+s for s in all_slots]
+        msg = f'出片完成 · 共 {len(delivery_slots)} 条'
+        if mux_ok:
+            msg += f' · 已贴原声 {mux_ok} 条'
+        msg += ' · 已升到约%dx%d' % (DELIVERY_W, DELIVERY_H)
+        msg += ' · 100%'
+        setp(p, d, state='done', stage='完成', progress=100, message=msg, results=urls, output_slots=all_slots,
+             render_meta=d.get('render_meta'))
+        log('job '+d['id']+' done slots='+str(len(delivery_slots))+' mux='+str(mux_ok)+' upscale=lanczos')
+    except Exception as e:
+        if str(e) in ('E_H3_CANCELLED', 'E_H3_INTERRUPTED') and is_cancelled(p):
+            log('job '+d['id']+' cancelled by user')
+            free_vram()
+            shutil.rmtree(R/'outputs'/'motion_generate_h3'/d['id'], ignore_errors=True)
+            shutil.rmtree(R/'inputs'/INPUT_SUB/d['id'], ignore_errors=True)
+            shutil.rmtree(OUT_ROOT/d['id'], ignore_errors=True)
+            p.unlink(missing_ok=True)
+            return True
+        code = str(e) if str(e).startswith('E_H3_') else 'E_H3_'+type(e).__name__.upper()
+        log('job '+d['id']+' failed '+code+'\n'+traceback.format_exc()[-1500:])
+        msg = '显存不够，已自动降分辨率仍失败（错误码 E_H3_OOM），可缩短视频或降低画质后重试' if code=='E_H3_OOM' else '出片失败（错误码 '+code+'），可重新提交'
+        setp(p, d, state='failed', stage='失败', message=msg)
+    return True
+
+def tick():
+    a = Adapter(); pr = a.probe()
+    for p in sorted(m.GENERATE.glob('*.json')):
+        if not ID.fullmatch(p.stem): continue
+        try: d = json.loads(p.read_text(encoding='utf-8'))
+        except (OSError, ValueError): continue
+        st = d.get('state')
+        if st == 'running':  # crashed mid-run -> retry once from queued
+            if d.get('_retried'): setp(p, d, state='failed', message='出片中断（错误码 E_H3_WORKER_RESTART），可重新提交'); continue
+            setp(p, d, state='queued', _retried=True, message='上次中断，重新排队'); st = 'queued'
+        if st == 'engine_pending':
+            if not pr['gpu']: setp(p, d, message='已排队：需要带卡开机（H3 模型已就绪）' if pr['ready'] else '已排队：H3 模型未齐'); continue
+            if not pr['ready']: setp(p, d, message='已排队：H3 模型校验未通过'); continue
+            if not pr['idle']: setp(p, d, message='已排队：显卡正忙，等待空闲'); continue
+            bridge.dispatch_one(a, p.stem)
+            d = json.loads(p.read_text(encoding='utf-8')); st = d.get('state')
+        if st == 'queued' and pr['gpu'] and pr['idle']:
+            process(p); return
+
+def main():
+    os.umask(0o077); lock = open(HERE/'motion_h3_worker.lock', 'a')
+    try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError: return
+    def pulse():
+        while True: atomic(STATUS, {'pid': os.getpid(), 'heartbeat': time.time()}); time.sleep(5)
+    threading.Thread(target=pulse, daemon=True).start()
+    log('worker started')
+    while True:
+        try: tick()
+        except Exception: log('tick error '+traceback.format_exc()[-800:])
+        time.sleep(5)
+
+if __name__ == '__main__': main()

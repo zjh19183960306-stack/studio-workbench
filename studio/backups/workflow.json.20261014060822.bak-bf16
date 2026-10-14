@@ -1,0 +1,370 @@
+{
+  "schema_version": "qwen-image-2.1-api-proposal-v1",
+  "validation": {
+    "level": "source_schema_and_graph_links_only",
+    "actual_model_execution": false,
+    "private_prompts_read": false,
+    "large_weights_downloaded": false
+  },
+  "sources": {
+    "comfyui_commit": "46493d824fd7eac25a741e505159e4c9e0ef0ebd",
+    "gguf_commit": "373048b8403a7820620065210a691263d4da0a61",
+    "templates_commit": "8be1f8c4b5af2d550d70922a23b79cee599e1f3e",
+    "node_schema": "https://github.com/Comfy-Org/ComfyUI/blob/46493d824fd7eac25a741e505159e4c9e0ef0ebd/comfy_extras/nodes_qwen.py#L111-L182",
+    "dynamic_input_flattening": "https://github.com/Comfy-Org/ComfyUI/blob/46493d824fd7eac25a741e505159e4c9e0ef0ebd/comfy_api/latest/_io.py#L1085-L1228",
+    "gguf_loader": "https://github.com/leejet/ComfyUI-GGUF/blob/373048b8403a7820620065210a691263d4da0a61/nodes.py#L135-L183",
+    "clip_loader": "https://github.com/Comfy-Org/ComfyUI/blob/46493d824fd7eac25a741e505159e4c9e0ef0ebd/nodes.py#L1017-L1042",
+    "cpu_vae_flags": "https://github.com/Comfy-Org/ComfyUI/blob/46493d824fd7eac25a741e505159e4c9e0ef0ebd/comfy/cli_args.py#L96-L102",
+    "vae_device_behavior": "https://github.com/Comfy-Org/ComfyUI/blob/46493d824fd7eac25a741e505159e4c9e0ef0ebd/comfy/model_management.py#L1279-L1305",
+    "official_t2i_template": "https://github.com/Comfy-Org/workflow_templates/blob/8be1f8c4b5af2d550d70922a23b79cee599e1f3e/templates/image_qwen_image_2_1_t2i.json",
+    "official_edit_template": "https://github.com/Comfy-Org/workflow_templates/blob/8be1f8c4b5af2d550d70922a23b79cee599e1f3e/templates/image_qwen_image_2_1_image_edit.json"
+  },
+  "runtime": {
+    "required_launch_flags": [
+      "--cpu-vae",
+      "--fp32-vae"
+    ],
+    "vae_device": "cpu",
+    "vae_compute_dtype": "float32",
+    "denoiser_device": "automatic MPS on Apple Silicon",
+    "text_encoder_device": "default",
+    "optional_clip_cpu_override": {
+      "node": "2",
+      "input": "device",
+      "value": "cpu"
+    },
+    "extra_prompt_enhancer_required": false,
+    "cache_node_required": false,
+    "cache_default": "auto, default lossless storage",
+    "no_download_nodes": true
+  },
+  "models": {
+    "diffusion": {
+      "filename": "qwen-image-2.1-UC-Q8_0.gguf",
+      "folder": "models/unet",
+      "revision": "6b34e59458d3eb7ba6a6f86a116aed5253dc02c3"
+    },
+    "text_encoder": {
+      "filename": "qwen3vl_8b_bf16.safetensors",
+      "folder": "models/text_encoders",
+      "revision": "cb504a4090723e43f17ad01cec0359490e2de613"
+    },
+    "vae": {
+      "filename": "qwen_image_2.1_vae_bf16.safetensors",
+      "folder": "models/vae",
+      "revision": "cb504a4090723e43f17ad01cec0359490e2de613"
+    }
+  },
+  "workflows": {
+    "t2i": {
+      "prompt": {
+        "1": {
+          "class_type": "UnetLoaderGGUF",
+          "inputs": {
+            "unet_name": "qwen-image-2.1-UC-Q8_0.gguf"
+          }
+        },
+        "2": {
+          "class_type": "CLIPLoader",
+          "inputs": {
+            "clip_name": "qwen3vl_8b_bf16.safetensors",
+            "type": "qwen_image",
+            "device": "default"
+          }
+        },
+        "3": {
+          "class_type": "VAELoader",
+          "inputs": {
+            "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+          }
+        },
+        "4": {
+          "class_type": "TextEncodeQwenImage21",
+          "inputs": {
+            "clip": [
+              "2",
+              0
+            ],
+            "prompt": "__USER_PROMPT__",
+            "negative_prompt": "多余的手指，融合的手指，缺失的手指，畸形的手，扭曲的肢体，模糊，多余的肢体",
+            "resolution": 1024
+          }
+        },
+        "5": {
+          "class_type": "KSampler",
+          "inputs": {
+            "model": [
+              "1",
+              0
+            ],
+            "seed": 0,
+            "steps": 36,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "positive": [
+              "4",
+              0
+            ],
+            "negative": [
+              "4",
+              1
+            ],
+            "latent_image": [
+              "4",
+              2
+            ],
+            "denoise": 1.0
+          }
+        },
+        "6": {
+          "class_type": "VAEDecode",
+          "inputs": {
+            "samples": [
+              "5",
+              0
+            ],
+            "vae": [
+              "3",
+              0
+            ]
+          }
+        },
+        "7": {
+          "class_type": "SaveImage",
+          "inputs": {
+            "images": [
+              "6",
+              0
+            ],
+            "filename_prefix": "Qwen21/t2i"
+          }
+        }
+      },
+      "bindings": {
+        "text": [
+          "4",
+          "prompt"
+        ],
+        "negative_text": [
+          "4",
+          "negative_prompt"
+        ],
+        "seed": [
+          "5",
+          "seed"
+        ],
+        "steps": [
+          "5",
+          "steps"
+        ],
+        "resolution": [
+          "4",
+          "resolution"
+        ],
+        "filename_prefix": [
+          "7",
+          "filename_prefix"
+        ],
+        "references": [],
+        "resolution_values": {
+          "1024": 1024,
+          "1536": 1536,
+          "2048": 2048
+        }
+      },
+      "required_substitutions": [
+        "__USER_PROMPT__"
+      ],
+      "output_node": "7",
+      "dimensions": "resolution by resolution; batch size 1. TextEncodeQwenImage21 output2 supplies correctly sized 64-channel /16 latent. For arbitrary aspect ratio, official template uses EmptyLatentImage connected to sampler latent_image; not included in this minimal square graph."
+    },
+    "reference_edit": {
+      "prompt": {
+        "1": {
+          "class_type": "UnetLoaderGGUF",
+          "inputs": {
+            "unet_name": "qwen-image-2.1-UC-Q8_0.gguf"
+          }
+        },
+        "2": {
+          "class_type": "CLIPLoader",
+          "inputs": {
+            "clip_name": "qwen3vl_8b_bf16.safetensors",
+            "type": "qwen_image",
+            "device": "default"
+          }
+        },
+        "3": {
+          "class_type": "VAELoader",
+          "inputs": {
+            "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+          }
+        },
+        "4": {
+          "class_type": "TextEncodeQwenImage21",
+          "inputs": {
+            "clip": [
+              "2",
+              0
+            ],
+            "prompt": "__USER_EDIT_INSTRUCTION_FOR_IMAGE1__",
+            "negative_prompt": "多余的手指，融合的手指，缺失的手指，畸形的手，扭曲的肢体，模糊，多余的肢体",
+            "resolution": 992,
+            "vae": [
+              "3",
+              0
+            ],
+            "images.image_1": [
+              "8",
+              0
+            ]
+          }
+        },
+        "5": {
+          "class_type": "KSampler",
+          "inputs": {
+            "model": [
+              "1",
+              0
+            ],
+            "seed": 0,
+            "steps": 36,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "positive": [
+              "4",
+              0
+            ],
+            "negative": [
+              "4",
+              1
+            ],
+            "latent_image": [
+              "4",
+              2
+            ],
+            "denoise": 1.0
+          }
+        },
+        "6": {
+          "class_type": "VAEDecode",
+          "inputs": {
+            "samples": [
+              "5",
+              0
+            ],
+            "vae": [
+              "3",
+              0
+            ]
+          }
+        },
+        "7": {
+          "class_type": "SaveImage",
+          "inputs": {
+            "images": [
+              "6",
+              0
+            ],
+            "filename_prefix": "Qwen21/reference_edit"
+          }
+        },
+        "8": {
+          "class_type": "LoadImage",
+          "inputs": {
+            "image": "__UPLOADED_REFERENCE_FILENAME__"
+          }
+        }
+      },
+      "bindings": {
+        "text": [
+          "4",
+          "prompt"
+        ],
+        "negative_text": [
+          "4",
+          "negative_prompt"
+        ],
+        "seed": [
+          "5",
+          "seed"
+        ],
+        "steps": [
+          "5",
+          "steps"
+        ],
+        "resolution": [
+          "4",
+          "resolution"
+        ],
+        "filename_prefix": [
+          "7",
+          "filename_prefix"
+        ],
+        "references": [
+          {
+            "node": "8",
+            "input": "image",
+            "conditioning_node": "4",
+            "conditioning_input": "images.image_1"
+          }
+        ],
+        "resolution_values": {
+          "1024": 1024,
+          "1536": 1536,
+          "2048": 2048
+        }
+      },
+      "required_substitutions": [
+        "__USER_EDIT_INSTRUCTION_FOR_IMAGE1__",
+        "__UPLOADED_REFERENCE_FILENAME__"
+      ],
+      "output_node": "7",
+      "dimensions": "The first reference sets aspect ratio; resolution is sqrt(target pixel area), dimensions each rounded to multiples of32. The same latent output2 must feed sampler. Resolution0 keeps input dimensions rounded32 and is not an initial test default.",
+      "multi_reference": {
+        "max_references": 16,
+        "loader_class_type": "LoadImage",
+        "loader_input": "image",
+        "loader_first_node_id": 8,
+        "loader_output": 0,
+        "conditioning_node": "4",
+        "conditioning_input_pattern": "images.image_{index}",
+        "index_start": 1,
+        "prompt_reference_pattern": "<image{index}>",
+        "preserve_vae_connection": true
+      }
+    }
+  },
+  "resolution_options": {
+    "value_type": "integer",
+    "schema_min": 0,
+    "schema_max": 4096,
+    "step": 32,
+    "quality_presets": {
+      "1024": 1024,
+      "1536": 1536,
+      "2048": 2048
+    },
+    "presets_runtime_validated": false,
+    "initial_edit_probe": 992,
+    "initial_edit_probe_label": "约1K（992）",
+    "silently_remap_user_resolution": false
+  },
+  "acceptance_notes": [
+    "Do not post this envelope as /prompt. POST {prompt: workflows[mode].prompt, client_id: your_id} only after substituting placeholder strings and uploading references into this ComfyUI instance.",
+    "LoadImage.image is the ComfyUI uploaded relative filename (including subfolder when returned), not an arbitrary local absolute path.",
+    "Check /object_info class names and model filename enumerations on the installed pinned runtime before first submission; this file is a source-verified proposal, not a successful inference report.",
+    "T2I uses native Qwen21 text node output2 instead of the optional empty-latent node; both reference conditionings share exact same image list and VAE.",
+    "The edit graph contains true VAE reference conditioning. Removing vae to bypass artifacts changes the task to vision-conditioned generation and is not accepted as edit validation.",
+    "Initial CPU fp32 VAE is a precaution for official issue16433 MPS VAE encode artifacts. Device flag also affects decoding.",
+    "Issue16435 reports noise at edit resolution1024 including CPU, but992/1056 reportedly worked. This is an unresolved upstream report, not a confirmed local workaround; try992 as isolated diagnostic and visually validate.",
+    "Native SaveImage writes PNG and preserves RGBA arrays. Returned output filename must exist and decode; a queue prompt_id alone is not success.",
+    "For a faithful reference edit, inspect preservation of unedited subject/layout as well as requested alteration. Record timings and memory separately for T2I and edit."
+  ],
+  "upstream_issue_links": [
+    "https://github.com/Comfy-Org/ComfyUI/issues/16433",
+    "https://github.com/Comfy-Org/ComfyUI/issues/16435"
+  ]
+}

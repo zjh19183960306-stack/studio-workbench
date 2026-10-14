@@ -1,0 +1,107 @@
+"""On-demand thumbnails. Never opens user media except to resize for the requester's browser; agents must not call this on user files."""
+import hashlib, os
+from pathlib import Path
+from aiohttp import web
+
+R = Path('/root/autodl-tmp'); THUMBS = R / 'thumbs'
+SIZE, QUALITY = 384, 75
+
+def _etag(path: Path) -> str:
+    st = path.stat()
+    return '"' + hashlib.md5(f'{path}:{st.st_mtime_ns}:{st.st_size}'.encode()).hexdigest() + '"'
+
+def cached_headers(path: Path, *, max_age=86400, ctype=None):
+    et = _etag(path)
+    h = {'Cache-Control': f'private, max-age={max_age}', 'ETag': et, 'X-Content-Type-Options': 'nosniff'}
+    if ctype: h['Content-Type'] = ctype
+    return h, et
+
+def thumb_path(kind: str, *parts: str) -> Path:
+    # kind = inputs | batch-<name>
+    safe = [p.replace('/', '_').replace('\\', '_').replace('..', '_') for p in parts]
+    return THUMBS / kind / ('__'.join(safe) + '.jpg')
+
+def ensure_thumb(src: Path, dest: Path) -> Path:
+    if dest.is_file() and dest.stat().st_mtime_ns >= src.stat().st_mtime_ns:
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    from PIL import Image, ImageOps
+    with Image.open(src) as im:
+        im = ImageOps.exif_transpose(im).convert('RGB')
+        im.thumbnail((SIZE, SIZE), Image.LANCZOS)
+        tmp = dest.with_suffix('.tmp.jpg')
+        im.save(tmp, format='JPEG', quality=QUALITY, optimize=True)
+        os.replace(tmp, dest)
+    return dest
+
+def drop_thumb(kind: str, *parts: str):
+    p = thumb_path(kind, *parts)
+    p.unlink(missing_ok=True)
+
+def drop_batch(batch: str):
+    import shutil
+    d = THUMBS / f'batch-{batch}'
+    if d.is_dir() and d.resolve().is_relative_to(THUMBS.resolve()):
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _guess_ctype(path: Path) -> str:
+    n = path.name.lower()
+    if n.endswith('.png'): return 'image/png'
+    if n.endswith(('.jpg', '.jpeg')): return 'image/jpeg'
+    if n.endswith('.webp'): return 'image/webp'
+    if n.endswith('.gif'): return 'image/gif'
+    return 'application/octet-stream'
+
+async def chunk_response(request, path: Path, *, headers=None, ctype=None):
+    """Serve one small byte slice via ?chunk=&size= for flaky tunnels (Serveo).
+    chunk = byte offset; size = max bytes (clamped 1..131072, default 65536).
+    Headers: X-Total-Length, X-Chunk-Offset, X-Chunk-Length, Accept-Ranges.
+    """
+    if not path.is_file(): raise web.HTTPNotFound()
+    try:
+        offset = int(request.query.get('chunk') or 0)
+        size = int(request.query.get('size') or 65536)
+    except ValueError:
+        raise web.HTTPBadRequest(text='bad chunk params')
+    if offset < 0: raise web.HTTPBadRequest(text='chunk offset must be >= 0')
+    size = max(1, min(size, 131072))
+    total = path.stat().st_size
+    h = dict(headers or {})
+    h.setdefault('X-Content-Type-Options', 'nosniff')
+    h['Accept-Ranges'] = 'bytes'
+    h['X-Total-Length'] = str(total)
+    h['X-Chunk-Offset'] = str(offset)
+    h['Cache-Control'] = 'private, no-store'
+    if offset >= total:
+        h['X-Chunk-Length'] = '0'
+        return web.Response(body=b'', content_type=ctype or _guess_ctype(path), headers=h)
+    with open(path, 'rb') as f:
+        f.seek(offset)
+        data = f.read(size)
+    h['X-Chunk-Length'] = str(len(data))
+    return web.Response(body=data, content_type=ctype or _guess_ctype(path), headers=h)
+
+async def file_response(request, path: Path, *, download=False, name=None, max_age=86400):
+    if not path.is_file(): raise web.HTTPNotFound()
+    h, et = cached_headers(path, max_age=max_age)
+    if 'chunk' in request.query:
+        return await chunk_response(request, path, headers={'X-Content-Type-Options': 'nosniff'})
+    if request.headers.get('If-None-Match') == et:
+        return web.Response(status=304, headers=h)
+    if download:
+        from urllib.parse import quote
+        h['Content-Disposition'] = f"attachment; filename*=UTF-8''{quote(name or path.name)}"
+    # Prefer Range when client asks (LAN / good tunnels)
+    rng = request.headers.get('Range')
+    if rng:
+        h['Accept-Ranges'] = 'bytes'
+        return web.FileResponse(path, headers=h)
+    h['Accept-Ranges'] = 'bytes'
+    return web.FileResponse(path, headers=h)
+
+async def thumb_response(request, src: Path, kind: str, *parts: str):
+    if not src.is_file(): raise web.HTTPNotFound()
+    dest = thumb_path(kind, *parts)
+    ensure_thumb(src, dest)
+    return await file_response(request, dest, max_age=7*86400, name=dest.name)

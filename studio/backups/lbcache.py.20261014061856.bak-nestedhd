@@ -1,0 +1,283 @@
+"""Cloud-side lightbox prepare + progress. No phone localStorage/IndexedDB."""
+from __future__ import annotations
+import asyncio, hashlib, json, os, re, time
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+from aiohttp import web
+import thumbs
+
+ROOT = Path('/root/autodl-tmp')
+CACHE = ROOT / 'lbcache'
+META = CACHE / 'meta'
+PREV = CACHE / 'preview'   # medium jpeg for instant view
+VIEW = CACHE / 'view'      # larger jpeg for lightbox "full enough"
+PREV_SIZE, PREV_Q = 960, 78
+VIEW_SIZE, VIEW_Q = 1600, 85
+
+_lock = asyncio.Lock()
+_tasks: dict[str, asyncio.Task] = {}
+
+def _safe_key(s: str) -> str:
+    return hashlib.sha256(s.encode('utf-8', 'replace')).hexdigest()[:40]
+
+def _meta_path(key: str) -> Path:
+    return META / f'{key}.json'
+
+def _load_meta(key: str) -> dict:
+    p = _meta_path(key)
+    if not p.is_file():
+        return {}
+    try:
+        return json.loads(p.read_text('utf-8'))
+    except Exception:
+        return {}
+
+def _save_meta(key: str, data: dict) -> None:
+    META.mkdir(parents=True, exist_ok=True)
+    data = dict(data)
+    data['key'] = key
+    data['updated'] = time.time()
+    tmp = _meta_path(key).with_suffix('.tmp')
+    tmp.write_text(json.dumps(data, ensure_ascii=False), 'utf-8')
+    os.replace(tmp, _meta_path(key))
+
+def resolve_src(app, url: str) -> Path:
+    """Map studio image URL to on-disk file. Only under allowed roots."""
+    if not isinstance(url, str) or not url:
+        raise web.HTTPBadRequest(text='bad url')
+    raw = url.strip()
+    if raw.startswith('blob:') or raw.startswith('data:'):
+        raise web.HTTPBadRequest(text='blob/data not supported')
+    u = urlparse(raw if '://' in raw else ('http://local' + (raw if raw.startswith('/') else '/' + raw)))
+    path = unquote(u.path or '')
+    # history
+    m = re.fullmatch(r'/api/history/file/([^/]+)', path)
+    if m:
+        import library
+        n = library._hist_name(m.group(1))
+        return (library.HIST / n).resolve()
+    # inputs
+    m = re.fullmatch(r'/api/inputs/([^/]+)', path)
+    if m:
+        import library
+        n = m.group(1)
+        if not library.IMG.fullmatch(n) or n.startswith('.'):
+            raise web.HTTPNotFound()
+        inputs_root = getattr(library, 'INPUTS', None) or getattr(library, 'IN', None)
+        if inputs_root is None:
+            raise web.HTTPNotFound()
+        p = (inputs_root / n).resolve()
+        if not p.is_file() or not p.is_relative_to(inputs_root.resolve()):
+            raise web.HTTPNotFound()
+        return p
+    # job output
+    m = re.fullmatch(r'/api/jobs/([^/]+)/images/(\d+)', path)
+    if m:
+        job_id, idx = m.group(1), int(m.group(2))
+        job = (app.get('jobs') or {}).get(job_id)
+        if not job or idx < 0 or idx >= len(job.get('images') or []):
+            raise web.HTTPNotFound()
+        info = job['images'][idx]
+        import library
+        p = (library.R / 'outputs' / (info.get('subfolder') or '') / info.get('filename', '')).resolve()
+        root = (library.R / 'outputs').resolve()
+        if not p.is_file() or not (p == root or root in p.parents):
+            raise web.HTTPNotFound()
+        return p
+    # selftest helper (synthetic only)
+    m = re.fullmatch(r'/api/lb/selftest/([^/]+)', path)
+    if m:
+        n = m.group(1)
+        if not re.fullmatch(r'[A-Za-z0-9._-]+', n) or '..' in n:
+            raise web.HTTPNotFound()
+        p = (ROOT / '_selftest' / n).resolve()
+        root = (ROOT / '_selftest').resolve()
+        if not p.is_file() or not p.is_relative_to(root):
+            raise web.HTTPNotFound()
+        return p
+    raise web.HTTPBadRequest(text='unsupported url')
+
+def src_token(src: Path) -> str:
+    st = src.stat()
+    return f'{src.resolve()}|{st.st_mtime_ns}|{st.st_size}'
+
+def ensure_jpeg(src: Path, dest: Path, max_side: int, quality: int) -> Path:
+    """Build a JPEG preview/view. Unique tmp per call; caller catches failures."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if dest.is_file() and src.is_file() and dest.stat().st_mtime_ns >= src.stat().st_mtime_ns:
+            return dest
+    except OSError:
+        pass
+    if not src.is_file():
+        raise FileNotFoundError(str(src))
+    from PIL import Image, ImageOps, ImageFile
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+    tmp = dest.parent / f".{dest.stem}.{os.getpid()}.{time.time_ns()}.tmp.jpg"
+    try:
+        with Image.open(src) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            im.thumbnail((max_side, max_side), Image.LANCZOS)
+            im.save(tmp, format="JPEG", quality=quality, optimize=True)
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            if tmp.is_file():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
+    return dest
+
+def _build_status(key: str, src: Path, meta: dict) -> dict:
+    total = src.stat().st_size if src.is_file() else 0
+    prev = PREV / f'{key}.jpg'
+    view = VIEW / f'{key}.jpg'
+    preview_ready = prev.is_file() and prev.stat().st_mtime_ns >= src.stat().st_mtime_ns
+    view_ready = view.is_file() and view.stat().st_mtime_ns >= src.stat().st_mtime_ns
+    return {
+        'key': key,
+        'total': total,
+        'offset': int(meta.get('offset') or 0),
+        'preview_ready': preview_ready,
+        'view_ready': view_ready,
+        'full_ready': src.is_file(),
+        'preview_bytes': prev.stat().st_size if preview_ready else 0,
+        'view_bytes': view.stat().st_size if view_ready else 0,
+        'preparing': key in _tasks and not _tasks[key].done(),
+    }
+
+async def _prepare_job(key: str, src: Path):
+    try:
+        # sync disk work in thread to avoid blocking loop
+        try:
+            await asyncio.to_thread(ensure_jpeg, src, PREV / f'{key}.jpg', PREV_SIZE, PREV_Q)
+            await asyncio.to_thread(ensure_jpeg, src, VIEW / f'{key}.jpg', VIEW_SIZE, VIEW_Q)
+            meta = _load_meta(key)
+            meta.update({'src': str(src), 'token': src_token(src), 'preview_ready': True, 'view_ready': True})
+            _save_meta(key, meta)
+        except Exception as e:
+            # Truncated images / races must not kill the event loop or drop the tunnel.
+            meta = _load_meta(key)
+            meta.update({'src': str(src), 'error': type(e).__name__, 'preview_ready': False, 'view_ready': False})
+            try:
+                _save_meta(key, meta)
+            except Exception:
+                pass
+    finally:
+        _tasks.pop(key, None)
+
+def start_prepare(key: str, src: Path):
+    meta = _load_meta(key)
+    meta.update({'src': str(src), 'token': src_token(src), 'total': src.stat().st_size})
+    _save_meta(key, meta)
+    prev = PREV / f'{key}.jpg'
+    view = VIEW / f'{key}.jpg'
+    need = (not prev.is_file() or prev.stat().st_mtime_ns < src.stat().st_mtime_ns
+            or not view.is_file() or view.stat().st_mtime_ns < src.stat().st_mtime_ns)
+    if need and key not in _tasks:
+        _tasks[key] = asyncio.create_task(_prepare_job(key, src))
+    return _build_status(key, src, meta)
+
+async def api_prepare(request):
+    data = await request.json()
+    url = (data or {}).get('url') if isinstance(data, dict) else None
+    src = resolve_src(request.app, url)
+    key = _safe_key(src_token(src))
+    st = start_prepare(key, src)
+    return web.json_response(st)
+
+async def api_status(request):
+    url = request.query.get('url')
+    src = resolve_src(request.app, url)
+    key = _safe_key(src_token(src))
+    # kick prepare if missing
+    st = start_prepare(key, src)
+    return web.json_response(st)
+
+async def api_progress(request):
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise web.HTTPBadRequest(text='bad body')
+    url = data.get('url')
+    src = resolve_src(request.app, url)
+    key = _safe_key(src_token(src))
+    meta = _load_meta(key)
+    try:
+        offset = int(data.get('offset') or 0)
+        total = int(data.get('total') or meta.get('total') or src.stat().st_size)
+    except Exception:
+        raise web.HTTPBadRequest(text='bad offset')
+    if offset < 0:
+        raise web.HTTPBadRequest(text='offset')
+    # only advance (or allow explicit reset with reset:true)
+    if data.get('reset') is True:
+        meta['offset'] = 0
+    else:
+        meta['offset'] = max(int(meta.get('offset') or 0), offset)
+    meta['total'] = total
+    meta['src'] = str(src)
+    _save_meta(key, meta)
+    return web.json_response(_build_status(key, src, meta))
+
+async def api_file(request):
+    """Serve preview/view/original with ?chunk=&size= from cloud cache."""
+    url = request.query.get('url')
+    kind = (request.query.get('kind') or 'view').lower()
+    src = resolve_src(request.app, url)
+    key = _safe_key(src_token(src))
+    start_prepare(key, src)
+    if kind == 'preview':
+        path = PREV / f'{key}.jpg'
+        if not path.is_file():
+            try:
+                await asyncio.to_thread(ensure_jpeg, src, path, PREV_SIZE, PREV_Q)
+            except Exception:
+                raise web.HTTPUnsupportedMediaType(text='preview unavailable')
+        ctype = 'image/jpeg'
+    elif kind == 'view':
+        path = VIEW / f'{key}.jpg'
+        if not path.is_file():
+            try:
+                await asyncio.to_thread(ensure_jpeg, src, path, VIEW_SIZE, VIEW_Q)
+            except Exception:
+                raise web.HTTPUnsupportedMediaType(text='view unavailable')
+        ctype = 'image/jpeg'
+    elif kind == 'full':
+        path = src
+        ctype = thumbs._guess_ctype(src)
+    else:
+        raise web.HTTPBadRequest(text='bad kind')
+    if not path.is_file():
+        raise web.HTTPNotFound()
+    return await thumbs.chunk_response(
+        request, path,
+        headers={'X-Content-Type-Options': 'nosniff', 'X-LB-Key': key, 'X-LB-Kind': kind},
+        ctype=ctype,
+    )
+
+async def api_selftest_file(request):
+    """Serve synthetic selftest images only (for public lb verification)."""
+    n = request.match_info['name']
+    if not re.fullmatch(r'[A-Za-z0-9._-]+', n):
+        raise web.HTTPNotFound()
+    p = (ROOT / '_selftest' / n).resolve()
+    root = (ROOT / '_selftest').resolve()
+    if not p.is_file() or not p.is_relative_to(root):
+        raise web.HTTPNotFound()
+    if request.query.get('thumb') == '1':
+        return await thumbs.thumb_response(request, p, 'selftest', n)
+    return await thumbs.file_response(request, p, max_age=0)
+
+def setup(app):
+    CACHE.mkdir(parents=True, exist_ok=True)
+    META.mkdir(parents=True, exist_ok=True)
+    PREV.mkdir(parents=True, exist_ok=True)
+    VIEW.mkdir(parents=True, exist_ok=True)
+    app.add_routes([
+        web.post('/api/lb/prepare', api_prepare),
+        web.get('/api/lb/status', api_status),
+        web.post('/api/lb/progress', api_progress),
+        web.get('/api/lb/file', api_file),
+        web.get('/api/lb/selftest/{name}', api_selftest_file),
+    ])

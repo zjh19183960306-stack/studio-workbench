@@ -1,0 +1,304 @@
+"""Motion-only contract. No model downloads, RGB forwarding or cloud API."""
+import shutil
+import asyncio, json, secrets, time, shutil
+from pathlib import Path
+from aiohttp import web
+from urllib.parse import quote
+import char_anim
+from worker_common import atomic, ID
+import hashlib, os, subprocess, re
+HERE = Path(__file__).resolve().parent
+QUEUE = HERE/'motion_preview_queue'
+GENERATE = HERE/'motion_generate_queue'
+OUT = HERE/'outputs'/'motion_preview'
+UPLOAD = HERE/'motion_uploads'
+
+GEN_OUT = HERE/'outputs'/'motion_generate'
+
+def ensure_still(mp4, still):
+    if still.is_file() and still.stat().st_size > 0 and not still.is_symlink():
+        return still
+    if not mp4.is_file() or mp4.is_symlink():
+        raise ValueError('finished media missing')
+    still.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = still.with_suffix('.tmp.jpg')
+    subprocess.run(['ffmpeg','-y','-i',str(mp4),'-frames:v','1','-q:v','3',str(tmp)], check=True, capture_output=True, timeout=60)
+    tmp.replace(still)
+    try: os.chmod(still, 0o600)
+    except OSError: pass
+    return still
+
+def history_still_id(jid, slot):
+    return 'hg'+hashlib.sha256((jid+chr(0)+slot).encode()).hexdigest()[:22]
+
+def history_stills(owner=None):
+    # Single-password studio: after login, all finished H3 jobs are shared history.
+    items=[]
+    for p in sorted(GENERATE.glob('*.json'), key=lambda x: x.stat().st_mtime, reverse=True):
+        try: d=read_job(GENERATE, p.stem)
+        except ValueError: continue
+        if d.get('state')!='done': continue
+        for slot in (d.get('output_slots') or []):
+            if not isinstance(slot,str): continue
+            if not re.fullmatch(r'result-\d+\.mp4', slot): continue
+            mp4=GEN_OUT/d['id']/slot
+            still=GEN_OUT/d['id']/(Path(slot).stem+'.ref.jpg')
+            try: ensure_still(mp4, still)
+            except Exception: continue
+            kid=history_still_id(d['id'], slot)
+            items.append({'id':kid,'kind':'image','path':str(still),'thumb_url':'/api/motion-preview/generation-jobs/%s/stills/%s'%(d['id'], Path(slot).stem+'.ref.jpg'),'from_history':True,'job_id':d['id'],'slot':slot,'created_at':d.get('created_at')})
+    return items
+
+def resolve_images(owner, image_ids):
+    c=catalog()
+    hist={x['id']:x for x in history_stills(owner)}
+    out=[]
+    for i in image_ids:
+        if i in c and c[i]['kind']=='image':
+            out.append({'id':i,'path':c[i]['path']})
+        elif i in hist:
+            out.append({'id':i,'path':hist[i]['path']})
+        else:
+            raise ValueError('bad image id')
+    return out
+
+
+def catalog():
+    c = char_anim.catalog()
+    for p in UPLOAD.glob('*.mp4'):
+        if ID.fullmatch(p.stem) and not p.is_symlink():
+            c[p.stem] = {'kind':'video', 'path':str(p)}
+    return c
+
+def public(d):
+    return {k:d[k] for k in ('id','state','message','created_at','results','anti_bleed','per_image','engine','motion_ids','image_ids','inference_started','control_kind','video_id','step','steps','stage','progress','updated_at') if k in d}
+
+def read_job(root, jid):
+    """Load a queue job by id. Auth is enforced by the server middleware."""
+    if not isinstance(jid,str) or not ID.fullmatch(jid): raise ValueError('编号无效')
+    try: d=json.loads((root/(jid+'.json')).read_text(encoding='utf-8'))
+    except (OSError,ValueError): raise ValueError('编号无效')
+    return d
+
+def read_owned(root, jid, owner):
+    d=read_job(root, jid)
+    if owner is not None and d.get('owner')!=owner: raise ValueError('编号无效')
+    return d
+
+def listing(root, owner=None):
+    # owner=None: list all (single-password studio shared history after login).
+    items=[]
+    for p in root.glob('*.json'):
+        try:
+            d=read_job(root,p.stem) if owner is None else read_owned(root,p.stem,owner)
+            items.append(public(d))
+        except ValueError: pass
+    return sorted(items,key=lambda x:x.get('created_at') or 0,reverse=True)[:100]
+
+async def materials(r):
+    c=catalog()
+    # Uploaded references are private to their session.
+    items=[]
+    for i,v in c.items():
+        if i in {p.stem for p in UPLOAD.glob('*.mp4')}:
+            try:
+                if json.loads((UPLOAD/(i+'.json')).read_text())['owner']!=r['owner']: continue
+            except (OSError,ValueError,KeyError): continue
+        item={'id':i,'kind':v['kind']}
+        path=Path(v['path'])
+        if v['kind']=='image':
+            item['thumb_url']='/api/inputs/'+quote(path.relative_to(HERE.parent/'inputs').as_posix(),safe='/')+'?thumb=1'
+        elif path.parent==HERE.parent/'videos' and path.suffix.lower()!='.avi':
+            item['cover_url']='/api/videos/'+quote(path.name,safe='')+'/cover'
+        else:
+            item['cover_url']='/api/motion-preview/materials/'+i+'/cover'
+        items.append(item)
+    for hs in history_stills(r['owner']):
+        items.append({'id':hs['id'],'kind':'image','thumb_url':hs['thumb_url'],'from_history':True,'job_id':hs['job_id'],'slot':hs['slot'],'created_at':hs.get('created_at')})
+    return web.json_response({'items':items})
+
+async def material_cover(r):
+    # Resolve opaque IDs only after the global authentication guard.
+    mid=r.match_info['mid']; c=catalog(); v=c.get(mid)
+    if not v or v['kind']!='video': raise web.HTTPNotFound()
+    p=Path(v['path'])
+    if p.parent==UPLOAD:
+        try:
+            if json.loads((UPLOAD/(mid+'.json')).read_text(encoding='utf-8'))['owner']!=r['owner']: raise web.HTTPNotFound()
+        except (OSError,ValueError,KeyError): raise web.HTTPNotFound()
+    import video
+    async with video._cover_slots:
+        dest=video._cover_path(p)
+        if not dest.exists() or dest.stat().st_mtime<p.stat().st_mtime:
+            dest.parent.mkdir(exist_ok=True)
+            try: await asyncio.to_thread(video._make_cover,p,dest)
+            except Exception: return web.json_response({'error':'封面暂不可用'},status=422)
+    return web.FileResponse(dest,headers={'Cache-Control':'private, no-store'})
+
+async def upload(r):
+    if shutil.disk_usage(HERE).free<512*1024**2: raise ValueError('磁盘空间不足，请使用视频库编号')
+    jid=secrets.token_hex(16);p=UPLOAD/(jid+'.mp4');size=0
+    try:
+        with p.open('xb') as f:
+            async for chunk in r.content.iter_chunked(65536):
+                size+=len(chunk)
+                if size>20*1024**2: raise ValueError('上传上限为 20 MB，请使用视频库编号')
+                f.write(chunk)
+        if not size: raise ValueError('请选择参考视频')
+        proc=await asyncio.create_subprocess_exec(shutil.which('ffprobe') or '/usr/bin/ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_type','-of','csv=p=0',str(p),stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL)
+        try: stdout,_=await asyncio.wait_for(proc.communicate(),15)
+        except asyncio.TimeoutError:
+            proc.kill();await proc.wait();raise ValueError('参考视频校验超时')
+        if proc.returncode or b'video' not in stdout: raise ValueError('参考视频格式无效')
+        atomic(UPLOAD/(jid+'.json'),{'owner':r['owner']})
+    except BaseException:
+        p.unlink(missing_ok=True);raise
+    return web.json_response({'id':jid,'kind':'video'},status=201)
+
+async def submit(r):
+    a=await r.json()
+    if not isinstance(a,dict): raise ValueError('请求无效')
+    depth=a.get('make_depth',False);white=a.get('make_white',False)
+    if type(depth)!=bool or type(white)!=bool or not(depth or white): raise ValueError('请至少选择白模或深度空间一种')
+    vid=a.get('video_id');c=catalog()
+    if not isinstance(vid,str) or vid not in c or c[vid]['kind']!='video': raise ValueError('请选择有效的参考视频编号')
+    if (UPLOAD/(vid+'.json')).exists():
+        if json.loads((UPLOAD/(vid+'.json')).read_text())['owner']!=r['owner']: raise ValueError('编号无效')
+    d={'id':secrets.token_hex(16),'owner':r['owner'],'created_at':time.time(),'video_id':vid,'make_depth':depth,'make_white':white,'state':'queued','message':'已排队：正在用深度/灰模引擎生成预演（CPU 可用，无需等 H3）','results':[]}
+    atomic(QUEUE/(d['id']+'.json'),d)
+    return web.json_response(public(d),status=201)
+
+def purge_failed():
+    for p in list(QUEUE.glob('*.json')):
+        try: d=read_job(QUEUE,p.stem)
+        except ValueError: continue
+        if d.get('state') in ('failed','error'):
+            o=OUT/p.stem
+            if o.is_dir() and not o.is_symlink(): shutil.rmtree(o,ignore_errors=True)
+            p.unlink(missing_ok=True)
+
+async def jobs(r):
+    purge_failed()
+    return web.json_response({'jobs':listing(QUEUE),'generation_jobs':listing(GENERATE)})
+async def events(r):
+    s=web.StreamResponse(headers={'Content-Type':'text/event-stream','X-Accel-Buffering':'no'});await s.prepare(r)
+    try:
+        for _ in range(150):
+            await s.write(('data: '+json.dumps({'jobs':listing(QUEUE),'generation_jobs':listing(GENERATE)},ensure_ascii=False)+'\n\n').encode());await asyncio.sleep(2)
+    except (ConnectionResetError,asyncio.CancelledError): pass
+    return s
+
+async def result(r):
+    try: d=read_job(QUEUE,r.match_info['jid'])
+    except ValueError: raise web.HTTPNotFound()
+    slot=r.match_info['slot']
+    if d['state']!='done' or slot not in ('result-depth.mp4','result-white.mp4') or not any(x['slot']==slot for x in d['results']): raise web.HTTPNotFound()
+    p=OUT/d['id']/slot
+    if not p.is_file() or p.is_symlink(): raise web.HTTPNotFound()
+    return web.FileResponse(p,headers={'Cache-Control':'private, no-store'})
+
+def resolve_controls(owner,motion_ids):
+    """MODULE A adapter: resolve only approved control output; never source RGB."""
+    controls=[]
+    for mid in motion_ids:
+        if not isinstance(mid,str) or ':' not in mid: raise ValueError('预览编号无效')
+        jid,kind=mid.split(':',1)
+        if kind not in ('depth','white'): raise ValueError('预览编号无效')
+        d=read_job(QUEUE,jid);slot='result-'+kind+'.mp4'
+        if d['state']!='done' or not any(x['id']==mid for x in d['results']): raise ValueError('请勾选已完成且通过检查的预览')
+        p=OUT/jid/slot
+        if not p.is_file() or p.is_symlink(): raise ValueError('预览暂不可用')
+        controls.append({'id':mid,'kind':kind,'path':str(p)})
+    return controls
+
+async def generate(r):
+    a=await r.json()
+    if not isinstance(a,dict): raise ValueError('请求无效')
+    imgs=a.get('image_ids');mids=a.get('motion_ids');anti=a.get('anti_bleed',True)
+    if type(anti)!=bool: raise ValueError('防串味选项无效')
+    per_image=a.get('per_image',False)
+    if type(per_image)!=bool: raise ValueError('单独出片选项无效')
+    for ids in (imgs,mids):
+        if not isinstance(ids,list) or not 1<=len(ids)<=8 or any(not isinstance(x,str) for x in ids) or len(set(ids))!=len(ids): raise ValueError('请勾选人物图与通过的预览（各最多 8 个）')
+    c=catalog()
+    hist_ids={x['id'] for x in history_stills(r['owner'])}
+    if any((x not in c or c[x]['kind']!='image') and x not in hist_ids for x in imgs): raise ValueError('人物图编号无效')
+    controls=resolve_controls(r['owner'],mids)
+    d={'id':secrets.token_hex(16),'owner':r['owner'],'created_at':time.time(),'image_ids':imgs,'motion_ids':mids,'motion_preview_ids':mids,'control_kind':[x['kind'] for x in controls],'anti_bleed':anti,'per_image':per_image,'engine':'minimax_h3_ref2va','state':'engine_pending','message':('已排队：每张人物图单独出片' if per_image else '已排队：%d 张人物图=同一个角色，共出 %d 条（衣服只认人物图）'%(len(imgs),len(mids))),'progress':0,'inference_started':False,'results':[]}
+    atomic(GENERATE/(d['id']+'.json'),d)
+    return web.json_response(public(d),status=201)
+
+async def generation_result(r):
+    try: d=read_job(GENERATE,r.match_info['jid'])
+    except ValueError: raise web.HTTPNotFound()
+    slot=r.match_info['slot']
+    import re
+    if d['state']!='done' or not re.fullmatch(r'result-\d+(?:-origaudio|-aiaudio)?\.mp4',slot) or slot not in d.get('output_slots',[]): raise web.HTTPNotFound()
+    p=HERE/'outputs'/'motion_generate'/d['id']/slot
+    if not p.is_file() or p.is_symlink(): raise web.HTTPNotFound()
+    return web.FileResponse(p,headers={'Cache-Control':'private, no-store'})
+
+
+
+async def delete_preview(r):
+    """Delete one motion-preview (depth/white) job and its output folder."""
+    jid = r.match_info.get('jid')
+    if not isinstance(jid, str) or not ID.fullmatch(jid):
+        raise ValueError('请提供有效预演编号')
+    try:
+        d = read_job(QUEUE, jid)
+    except ValueError:
+        raise web.HTTPNotFound()
+    out_dir = OUT / jid
+    if out_dir.is_dir() and not out_dir.is_symlink():
+        root = OUT.resolve()
+        resolved = out_dir.resolve()
+        if root not in resolved.parents and resolved != root:
+            raise ValueError('路径无效')
+        shutil.rmtree(resolved)
+    job_path = QUEUE / (jid + '.json')
+    if job_path.is_file() and not job_path.is_symlink():
+        job_path.unlink()
+    return web.json_response({'ok': True, 'deleted': 1, 'id': jid})
+
+
+async def delete_generation(r):
+    """Delete one finished generation job and its output folder (incl. -origaudio companions)."""
+    jid = r.match_info.get('jid')
+    if not isinstance(jid, str) or not ID.fullmatch(jid):
+        raise ValueError('请提供有效成品编号')
+    try:
+        d = read_job(GENERATE, jid)
+    except ValueError:
+        raise web.HTTPNotFound()
+    out_dir = GEN_OUT / jid
+    if out_dir.is_dir() and not out_dir.is_symlink():
+        root = GEN_OUT.resolve()
+        resolved = out_dir.resolve()
+        if root not in resolved.parents and resolved != root:
+            raise ValueError('路径无效')
+        shutil.rmtree(resolved)
+    job_path = GENERATE / (jid + '.json')
+    if job_path.is_file() and not job_path.is_symlink():
+        job_path.unlink()
+    return web.json_response({'ok': True, 'deleted': 1, 'id': jid})
+
+async def generation_still(r):
+    try: d=read_job(GENERATE,r.match_info['jid'])
+    except ValueError: raise web.HTTPNotFound()
+    name=r.match_info['name']
+    import re as _re
+    if d['state']!='done' or not _re.fullmatch(r'result-\d+\.ref\.jpg', name): raise web.HTTPNotFound()
+    slot=name.replace('.ref.jpg','.mp4')
+    if slot not in d.get('output_slots',[]): raise web.HTTPNotFound()
+    mp4=GEN_OUT/d['id']/slot
+    still=GEN_OUT/d['id']/name
+    try: ensure_still(mp4, still)
+    except Exception: raise web.HTTPNotFound()
+    if not still.is_file() or still.is_symlink(): raise web.HTTPNotFound()
+    return web.FileResponse(still, headers={'Cache-Control':'private, no-store'})
+
+
+def setup(app):
+    for p in (QUEUE,GENERATE,UPLOAD,OUT): p.mkdir(parents=True,exist_ok=True,mode=0o700)
+    app.add_routes([web.get('/api/motion-preview/materials',materials),web.get('/api/motion-preview/materials/{mid}/cover',material_cover),web.post('/api/motion-preview/upload',upload),web.post('/api/motion-preview/jobs',submit),web.get('/api/motion-preview/jobs',jobs),web.get('/api/motion-preview/events',events),web.get('/api/motion-preview/jobs/{jid}/results/{slot}',result),web.post('/api/motion-preview/generate',generate),web.get('/api/motion-preview/generation-jobs/{jid}/results/{slot}',generation_result),web.get('/api/motion-preview/generation-jobs/{jid}/stills/{name}',generation_still),web.delete('/api/motion-preview/jobs/{jid}',delete_preview),web.delete('/api/motion-preview/generation-jobs/{jid}',delete_generation)])

@@ -1,0 +1,251 @@
+"""Restricted SSH/stdin RPC. No media names or raw exception messages are emitted."""
+import os, sys, json, re, time, subprocess, shutil, fcntl, threading
+from pathlib import Path
+
+ROOT = Path('/root/autodl-tmp')
+JOBS = ROOT / 'motion_previews'
+MODEL = ROOT / 'depth_anything/checkpoints/depth_anything_v2_vits.pth'
+LOCK = ROOT / 'motion_extract/engine.lock'
+MAX_BYTES = 512 * 1024**2
+
+def atomic(p, d):
+    t = p.with_suffix('.tmp')
+    t.write_text(json.dumps(d), encoding='utf-8'); os.replace(t, p)
+
+def gpu():
+    try:
+        r = subprocess.run(['nvidia-smi','-L'], capture_output=True, timeout=10)
+        return r.returncode == 0 and b'GPU ' in r.stdout
+    except Exception: return False
+
+def job(jid):
+    if not re.fullmatch(r'[a-f0-9]{32}', jid): raise ValueError()
+    p = JOBS / jid
+    if p.is_symlink(): raise ValueError()
+    return p
+
+def safe(p, name):
+    q = p / name
+    if q.is_symlink(): raise ValueError()
+    return q
+
+def status(p):
+    if not p.exists(): return {'state':'missing'}
+    d = json.loads(safe(p,'status.json').read_text())
+    if d['state'] == 'running':
+        try: os.kill(d['pid'], 0)
+        except ProcessLookupError:
+            latest=json.loads(safe(p,'status.json').read_text())
+            if latest.get('state')!='running' or latest.get('pid')!=d['pid']: return latest
+            d.update(state='failed', error='runner_exited'); atomic(p/'status.json',d)
+    return d
+
+def idle():
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with LOCK.open('a') as f:
+        try: fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB); return True
+        except BlockingIOError: return False
+
+def spec_validate(d, jid):
+    if set(d) - {'id','mode','outputs','synthetic','max_frames','max_side','input_size'}: raise ValueError()
+    if d.get('id') != jid or d.get('mode','cpu_depth') not in ('cpu_depth','gpu_only'): raise ValueError()
+    out = d.get('outputs',['depth','gray_sil'])
+    if not isinstance(out,list) or not out or len(out)>2 or len(set(out))!=len(out) or any(x not in ('depth','gray_sil') for x in out): raise ValueError()
+    if type(d.get('synthetic',False)) is not bool: raise ValueError()
+    for k, default, low, high in [('max_frames',300,1,3600),('max_side',512,64,1024),('input_size',518,112,518)]:
+        v=d.get(k,default)
+        if type(v)!=int or not low<=v<=high: raise ValueError()
+        d[k]=v
+    d.update(mode=d.get('mode','cpu_depth'),outputs=out,synthetic=d.get('synthetic',False))
+    return d
+
+def gated(p, s):
+    present=gpu()  # before upload stdin or decoder access
+    if s['mode']=='gpu_only' and not present:
+        atomic(p/'status.json',{'state':'waiting_gpu','gpu':False,'outputs':[]})
+        return True
+    return False
+
+def rpc(a):
+    if a==['probe']:
+        return dict(reachable=True,gpu=gpu(),ready=MODEL.is_file(),clay_backend='grabcut_foreground_fallback',idle=idle())
+    if len(a)<2: raise ValueError()
+    p=job(a[1]); op=a[0]
+    if op=='init' and len(a)==2:
+        raw=sys.stdin.buffer.read(4097)
+        if len(raw)>4096: raise ValueError()
+        s=spec_validate(json.loads(raw),a[1])
+        p.mkdir(parents=True,exist_ok=True,mode=0o700)
+        with safe(p,'rpc.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            if (p/'spec.json').exists(): return status(p)
+            atomic(p/'spec.json',s); atomic(p/'status.json',{'state':'staged','outputs':[]})
+            gated(p,s)
+        return status(p)
+    if op=='status' and len(a)==2: return status(p)
+    s=json.loads(safe(p,'spec.json').read_text())
+    if op=='upload' and len(a)==3 and a[2]=='input.mp4':
+        if s['synthetic']: raise ValueError()
+        if gated(p,s): return status(p)
+        with safe(p,'rpc.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            if status(p)['state'] not in ('staged','waiting_gpu'): raise ValueError()
+            dest=safe(p,'input.mp4'); tmp=safe(p,'input.part'); size=0
+            try:
+                with tmp.open('wb') as f:
+                    while True:
+                        b=sys.stdin.buffer.read(1024**2)
+                        if not b: break
+                        size+=len(b)
+                        if size>MAX_BYTES or shutil.disk_usage(p).free<1024**3: raise ValueError()
+                        f.write(b)
+                if not size: raise ValueError()
+                os.replace(tmp,dest)
+                atomic(p/'status.json',{'state':'staged','outputs':[]})
+            finally: tmp.unlink(missing_ok=True)
+        return {'ok':True,'bytes':size}
+    if op=='start' and len(a)==2:
+        if gated(p,s): return status(p)
+        with safe(p,'rpc.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            old=status(p)
+            if old['state'] in ('running','done','failed'): return old
+            if not idle(): return {'state':'busy'}
+            child=subprocess.Popen([sys.executable,__file__,'run',a[1]],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            for _ in range(100):
+                d=status(p)
+                if d['state'] not in ('staged','waiting_gpu'): return d
+                if child.poll() is not None: break
+                time.sleep(.05)
+            return {'state':'starting'}
+    if op=='download' and len(a)==3 and a[2] in ('depth.mp4','gray_sil.mp4'):
+        d=status(p)
+        if d['state']!='done' or a[2] not in d['outputs']: raise ValueError()
+        with safe(p,a[2]).open('rb') as f: shutil.copyfileobj(f,sys.stdout.buffer)
+        return None
+    raise ValueError()
+
+def execute(p,s,save):
+    import cv2, numpy as np
+    cv2.setNumThreads(2)
+    model=None; device='cpu'
+    if 'depth' in s['outputs'] and not s['synthetic']:
+        import torch
+        torch.set_num_threads(2)
+        sys.path.insert(0,str(ROOT/'depth_anything'))
+        from depth_anything_v2.dpt import DepthAnythingV2
+        device='cuda' if torch.cuda.is_available() else 'cpu'  # match DepthAnythingV2.image2tensor DEVICE
+        if not MODEL.is_file(): raise RuntimeError('model_missing')
+        model=DepthAnythingV2(encoder='vits',features=64,out_channels=[48,96,192,384])
+        model.load_state_dict(torch.load(MODEL,map_location='cpu',weights_only=True))
+        model=model.to(device).eval()
+    source=safe(p,'input.mp4')
+    if s['synthetic']:
+        w=cv2.VideoWriter(str(source),cv2.VideoWriter_fourcc(*'mp4v'),6,(160,128))
+        if not w.isOpened(): raise RuntimeError('encode_failed')
+        for i in range(6):
+            f=np.full((128,160,3),240,np.uint8)
+            cv2.rectangle(f,(65+i,35),(95+i,110),(30,60,90),-1)
+            cv2.circle(f,(80+i,23),12,(30,60,90),-1); w.write(f)
+        w.release()
+    cap=cv2.VideoCapture(str(source)); writers={}; count=0
+    if cap.get(cv2.CAP_PROP_FRAME_WIDTH)>4096 or cap.get(cv2.CAP_PROP_FRAME_HEIGHT)>4096:
+        cap.release(); raise RuntimeError('media_limits')
+    fps=cap.get(cv2.CAP_PROP_FPS)
+    if not np.isfinite(fps) or fps<=0 or fps>120: fps=12
+    try:
+        while count<s['max_frames']:
+            ok,frame=cap.read()
+            if not ok: break
+            h,w=frame.shape[:2]
+            factor=min(1,s['max_side']/max(h,w))
+            w=max(2,int(w*factor)//2*2); h=max(2,int(h*factor)//2*2)
+            frame=cv2.resize(frame,(w,h))
+            for kind in s['outputs']:
+                if kind=='depth':
+                    if s['synthetic']: depth=np.indices((h,w))[0].astype('float32')
+                    else:
+                        import torch
+                        with torch.inference_mode(): depth=model.infer_image(frame,s['input_size'])
+                    gray=((depth-depth.min())/max(float(depth.max()-depth.min()),1e-6)*255).astype('uint8')
+                else:
+                    mask=np.zeros((h,w),np.uint8)
+                    cv2.grabCut(frame,mask,(w//10,h//20,w*8//10,h*9//10),np.zeros((1,65),np.float64),np.zeros((1,65),np.float64),2,cv2.GC_INIT_WITH_RECT)
+                    gray=np.where((mask==1)|(mask==3),160,32).astype('uint8')
+                if kind not in writers:
+                    writer=cv2.VideoWriter(str(safe(p,kind+'.part.mp4')),cv2.VideoWriter_fourcc(*'mp4v'),fps,(w,h))
+                    if not writer.isOpened(): raise RuntimeError('encode_failed')
+                    writers[kind]=writer
+                writers[kind].write(cv2.cvtColor(gray,cv2.COLOR_GRAY2BGR))
+            count+=1
+            save(frames=count,device=device)
+        if not count: raise RuntimeError('decode_failed')
+    finally:
+        cap.release()
+        for writer in writers.values(): writer.release()
+        if s['synthetic']: source.unlink(missing_ok=True)
+    for kind in s['outputs']:
+        q=safe(p,kind+'.part.mp4')
+        v=cv2.VideoCapture(str(q)); n=0
+        while True:
+            ok,_=v.read()
+            if not ok: break
+            n+=1
+        v.release()
+        if n!=count: raise RuntimeError('output_invalid')
+        os.replace(q,safe(p,kind+'.mp4'))
+    return dict(outputs=[k+'.mp4' for k in s['outputs']],frames=count,
+                frame_limit_reached=count==s['max_frames'],kind='gray_sil' if 'gray_sil' in s['outputs'] else 'depth',
+                depth_backend='synthetic' if s['synthetic'] else 'depth_anything_v2_vits',
+                clay_backend='grabcut_foreground_fallback',device=device,
+                output_bytes=sum((p/(k+'.mp4')).stat().st_size for k in s['outputs']))
+
+def run(jid):
+    p=job(jid); s=json.loads(safe(p,'spec.json').read_text())
+    os.nice(15)
+    with LOCK.open('a') as lease:
+        try: fcntl.flock(lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            atomic(p/'status.json',{'state':'staged','error':'busy','outputs':[]}); return
+        if gated(p,s): return
+        start=time.monotonic(); d={'state':'running','pid':os.getpid(),'outputs':[]}; mutex=threading.Lock()
+        def save(**kw):
+            with mutex:
+                d.update(kw,heartbeat=time.time(),elapsed_seconds=round(time.monotonic()-start,2)); atomic(p/'status.json',d)
+        save()
+        def deadline():
+            time.sleep(900)
+            with mutex:
+                if d['state']!='running': return
+                d.update(state='waiting_gpu' if s['mode']=='cpu_depth' else 'failed',error='runtime_limit',outputs=[],elapsed_seconds=900)
+                atomic(p/'status.json',d)
+                for k in ('depth','gray_sil'): safe(p,k+'.part.mp4').unlink(missing_ok=True)
+                if s['synthetic']: safe(p,'input.mp4').unlink(missing_ok=True)
+                os._exit(0)
+        threading.Thread(target=deadline,daemon=True).start()
+        def pulse():
+            while d['state']=='running': time.sleep(5); save()
+        threading.Thread(target=pulse,daemon=True).start()
+        try: save(state='done',**execute(p,s,save))
+        except Exception as e:
+            code=str(e) if str(e) in ('model_missing','encode_failed','decode_failed','output_invalid','media_limits') else 'inference_failed'
+            save(state='failed',error=code,outputs=[])
+        finally:
+            for k in ('depth','gray_sil'): safe(p,k+'.part.mp4').unlink(missing_ok=True)
+            if s['synthetic']: safe(p,'input.mp4').unlink(missing_ok=True)
+
+if __name__=='__main__':
+    os.umask(0o077)
+    try:
+        a=sys.argv[1:]
+        if a==['--synthetic-test']:
+            import uuid
+            jid=uuid.uuid4().hex; p=job(jid); p.mkdir(parents=True)
+            atomic(p/'spec.json',spec_validate({'id':jid,'synthetic':True},jid)); atomic(p/'status.json',{'state':'staged','outputs':[]})
+            idle(); run(jid); print(json.dumps(dict(id=jid,**status(p))))
+        elif len(a)==2 and a[0]=='run': run(a[1])
+        else:
+            result=rpc(a)
+            if result is not None: print(json.dumps(result))
+    except Exception:
+        print(json.dumps({'state':'failed','error':'invalid_request_or_runtime'})); sys.exit(1)

@@ -1,0 +1,1108 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本地图片工作台</title>
+<style>
+:root{color-scheme:dark;font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#eee;background:#141816}*{box-sizing:border-box}body{margin:0}main{max-width:1160px;margin:auto;padding:38px 28px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:30px}h1{font-size:24px;margin:0}small,.muted{color:#9ea9a1}.tag{color:#accdb8;border:1px solid #34463b;border-radius:30px;padding:5px 13px}.layout{display:grid;grid-template-columns:370px 1fr;gap:28px}section{background:#1c231e;border:1px solid #303b33;border-radius:16px;padding:24px}label{display:block;font-weight:600;margin-bottom:10px}.step{color:#96bfa6;margin-right:9px}button,select,textarea{font:inherit;border:1px solid #46564b;border-radius:9px;color:inherit;background:#27332b}button{padding:10px 18px;cursor:pointer}button:hover{border-color:#a7d4b8}button:disabled{opacity:.45;cursor:default}.primary{background:#9dccad;color:#132019;border:0;font-weight:650;flex:1}textarea{width:100%;resize:vertical;min-height:155px;padding:12px;margin-bottom:20px}select{padding:8px;max-width:100%}.row{display:flex;gap:10px;align-items:center}.block{margin-bottom:28px}.refs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.ref{position:relative}.ref img{width:66px;height:76px;object-fit:cover;border-radius:6px}.ref button{position:absolute;right:-5px;top:-5px;border-radius:20px;padding:0;width:23px;height:23px;background:#111}.preview{display:flex;min-height:510px;align-items:center;justify-content:center;flex-direction:column;background:#161b18;overflow:hidden}.preview img{max-width:100%;max-height:75vh;border-radius:8px}.empty{text-align:center;color:#87948b;max-width:290px}.empty span{display:block;font-size:44px;margin-bottom:16px;color:#6d947b}#status{min-height:55px;margin:20px 0 5px;white-space:pre-wrap}progress{width:100%;accent-color:#9dccad;height:14px;display:none}a{color:#b3dabe}#resultActions{margin-top:15px}.error{color:#efa79b}#service{max-width:100%;margin-top:4px}input[type=file]{display:none}@media(max-width:760px){main{padding:22px 16px}.layout{grid-template-columns:1fr}.preview{min-height:330px}header{align-items:flex-start}.tag{font-size:12px}section{padding:20px}}
+</style>
+<style id="vlib-cover-style">
+#vlRows .vl-video-item{padding:10px 0;border-bottom:1px solid #536455;min-width:0}
+#vlRows .vl-video-row{display:flex;align-items:center;gap:12px;min-width:0}
+#vlRows .vl-video-row>input{flex:0 0 auto;width:18px;height:18px;margin:0}
+#vlRows .vl-cover{display:flex;align-items:center;justify-content:center;flex:0 0 112px;width:112px;height:64px;position:relative;background:#17211b;border-radius:6px;overflow:hidden;color:#a9b7ad;font-size:12px;cursor:pointer;border:0;padding:0}
+#vlRows .vl-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
+#vlRows .vl-cover::after{content:'▶';position:absolute;right:6px;bottom:4px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:11px;line-height:22px;text-align:center;pointer-events:none}
+#vlRows .vl-cover.playing::after{content:'❚❚';font-size:9px;letter-spacing:-1px}
+#vlRows .vl-video-info{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere;flex:1}
+#vlRows .vl-video-info small{opacity:.75}
+#vlRows .vl-player{display:none;margin-top:8px}
+#vlRows .vl-player.open{display:block}
+#vlRows .vl-player video{width:100%;max-width:640px;max-height:50vh;background:#0d1210;border-radius:8px}
+#vlRows .vl-player .vl-close{margin-top:6px;font-size:13px}
+@media(max-width:480px){#vlRows .vl-video-row{gap:8px}#vlRows .vl-cover{flex-basis:88px;width:88px;height:50px}}
+</style>
+<style id="studioUxPolishStyle">
+#studioToast{position:fixed;z-index:3000;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,420px);background:#1d2a22;color:#e7f2ea;border:1px solid #6d947b;border-radius:12px;padding:12px 16px;box-shadow:0 8px 28px rgba(0,0,0,.35);display:none}
+#studioToast.show{display:block}
+#studioConfirmBar{position:fixed;z-index:3001;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(94vw,460px);background:#18211b;color:#e7f2ea;border:1px solid #efa79b;border-radius:12px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.4);display:none}
+#studioConfirmBar.show{display:block}
+#studioConfirmBar .row{gap:8px;margin-top:10px;flex-wrap:wrap}
+#studioConfirmBar button.danger{background:#7a3a34;color:#fff}
+#studioTabs .tabBadge{display:inline-block;min-width:18px;padding:1px 6px;margin-left:4px;border-radius:999px;background:#d45d4e;color:#fff;font-size:12px;line-height:18px;vertical-align:top}
+#studioTabs .tabMore{position:relative;flex:0 0 auto}
+#studioTabs .tabMoreBtn{display:none;align-items:center;justify-content:center}
+#studioTabs .tabMoreMenu{position:absolute;right:0;top:100%;margin-top:4px;background:#141816;border:1px solid #46564b;border-radius:10px;padding:8px;min-width:160px;display:none;z-index:3000;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+#studioTabs .tabMoreMenu.open{display:flex;flex-direction:column;gap:6px}
+#studioTabs .tabMoreMenu button{max-width:none;width:100%;min-height:48px;font-size:16px}
+@media(max-width:760px){
+  #studioTabs .tabMoreMenu.open{position:fixed;left:10px;right:10px;top:max(64px,env(safe-area-inset-top));margin:0;max-height:70vh;overflow:auto;border:1px solid #6d947b}
+}
+#vlNewBanner{display:none;margin:8px 0;padding:8px 12px;border-radius:8px;background:#24352b;border:1px solid #6d947b}
+#vlNewBanner.show{display:block}
+#vlRows .vl-cover.fail{background:#1a2220;color:#c9d5cc;flex-direction:column;gap:2px;text-align:center;padding:4px}
+#vlRows .vl-retry{font-size:12px;padding:2px 8px;margin-top:2px}
+#mpPerVideoStatus .mpJobRow{border:1px solid #46564b;border-radius:8px;padding:8px;margin:8px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#mpPerVideoStatus .ok{color:#9dccad}#mpPerVideoStatus .bad{color:#efa79b}#mpPerVideoStatus .wait{color:#d2c48a}
+@media(max-width:760px){
+  #studioTabs button.tabSecondary{display:none}
+  #studioTabs button.tabMoreBtn{display:inline-flex}
+}
+@media(min-width:761px){
+  #studioTabs button.tabMoreBtn{display:none}
+  #studioTabs .tabMoreMenu{display:none!important}
+}
+</style>
+
+<div id="studioToast" role="status" aria-live="polite"></div>
+<div id="studioConfirmBar" role="dialog" aria-modal="true" aria-labelledby="studioConfirmText">
+  <div id="studioConfirmText"></div>
+  <div class="row"><button type="button" id="studioConfirmOk" class="danger">确定</button><button type="button" id="studioConfirmCancel">取消</button></div>
+</div>
+<main><div id="vlNewBanner" role="status"></div><details id="videoLibrary" style="margin:18px 0"><summary>视频库（上传和链接下载的视频）</summary><div class="row" style="flex-wrap:wrap"><button id="vlUpBtn" type="button" class="primary" style="flex:0 0 auto;white-space:nowrap;min-width:110px">上传视频</button><button id="vlRefresh">刷新</button><button id="vlUse" type="button" style="opacity:.8">同步到抽帧选择框</button><button id="vlDelete">删除勾选的视频</button></div><small id="vlMsg">点封面即可播放；勾选后可直接抽帧或训练；可勾多个删除。</small><div id="vlRows"></div><div style="margin-top:16px"><b>DreamID-V 换脸</b><p>先在视频库勾选视频，再从素材库勾选人脸照片，或用现有「添加参考照片」上传。DreamID-V 引擎一次只支持一张参考，当前使用所选第一张照片。</p><button id="dreamUpload" type="button">上传人脸照片</button><button id="dreamLibrary" type="button">去素材库选照片</button><button id="dreamStart">开始 DreamID-V</button><button id="dreamRefresh">查看排队</button><p id="dreamMsg" role="status">程序已接好，真正换脸需要带卡开机。已排队，需要带卡开机；显卡空闲后自动执行。</p></div><div id="faceswapSuite" style="margin-top:18px;border-top:1px solid #536455;padding-top:12px"><b>FaceFusion 换脸</b><p>勾选视频，再添加人脸参考照片。无卡只校验并排队，需带卡开机。</p><button type="button" id="ffUpload">上传人脸照片</button><button type="button" id="ffLibrary">去素材库选照片</button><button type="button" id="ffStart">开始 FaceFusion（排队）</button><p><b>DeepFaceLab 专属模型</b></p><p>先准备源人脸素材包并勾选目标视频，再由你点击开始训练。可填写已有素材包编号，或已导出的 ZIP 文件名；无卡不会训练。已有模型换脸无需重新训练。</p><label>素材包编号或 ZIP 文件名 <input id="dflPack" placeholder="例如 年月日-时分秒 或 training.zip"></label><label>专属模型编号 <input id="dflModel" placeholder="英文字母、数字、下划线"></label><label>模型类型 <select id="dflClass"><option value="Quick96">Quick96（快速）</option><option value="SAEHD">SAEHD</option></select></label><label>本次训练轮数 <input id="dflIterations" type="number" value="1000" min="1" max="100000"></label><small>训练达到本次轮数后保存；短轮数不代表成品质量。已有模型换脸需选对应模型类型。</small><label><input id="dflConfirm" type="checkbox">我确认准备并开始此专属模型训练</label><button type="button" id="dflTrain">准备/训练专属模型（排队）</button><button type="button" id="dflSwap">用已有模型换脸（排队）</button><button type="button" id="fsRefresh">查看排队</button><p id="fsMsg" role="status">需要带卡开机。已排队，需要带卡开机；显卡空闲后自动执行。</p></div>
+</details><button id="studioLogout">退出登录并清空大图缓存</button><header><div><h1>本地图片工作台</h1><small>照片和描述在这台电脑处理</small></div><div class="tag">Qwen Image 2.1 · Q8</div></header><div class="layout"><section id="secGen"><h2 style="margin:0 0 10px;font-size:19px">出图</h2>
+<div class="block" id="charRefBox"><label style="font-size:17px;margin:0 0 8px"><span class="step">1</span>人物参考 <small style="font-weight:400">长相/衣服看这里</small></label><div class="row" style="flex-wrap:wrap"><button id="choose">＋ 添加照片</button><button id="libOpen">从素材库选择</button><button id="libUpBtn" type="button">上传到素材库</button><small id="libUpMsg" class="muted" style="margin-left:6px"></small><button id="frOpen">人物碎片素材库</button><button id="charAssetBtn" type="button" class="primary" style="flex:0 0 auto;white-space:nowrap">生成人物资产库</button><small id="charAssetMsg" class="muted" style="margin-left:6px"></small></div><input id="files" type="file" accept="image/png,image/jpeg,image/webp" multiple><div id="refs" class="refs"></div><div id="charAssetPanel" style="margin-top:12px;border:1px solid #303b33;border-radius:10px;padding:10px"><b>人物资产</b> <small class="muted">一点生成白底全身 + 三视图 + 设定图（本地 Qwen2.1）。完成后可勾选加入人物参考。</small><div class="row" style="margin:8px 0;flex-wrap:wrap"><button id="charAssetRefresh" type="button">刷新资产库</button><small id="charAssetStatus" class="muted"></small></div><div id="charAssetList" style="margin-top:6px"></div></div><div id="frPanel" hidden style="margin-top:12px;border:1px solid #303b33;border-radius:10px;padding:10px"><b>人物碎片素材库</b> <small class="muted">视频抽好、分好类的人物帧。点图放大，点「勾选」才选中。</small><div class="row" style="margin:10px 0;flex-wrap:wrap"><select id="frVid"></select><button id="frRefresh">刷新</button><button id="frImgTog" type="button">展开图片</button><button id="frAll">全选/取消</button><small id="frSel">未选择</small></div><div id="frCats" class="row" style="flex-wrap:wrap;gap:6px;margin:6px 0"></div><div id="frMiss" class="muted" style="white-space:pre-wrap;margin:6px 0"></div><div class="row" style="margin:8px 0;flex-wrap:wrap"><button id="frUse" class="primary" style="flex:0">用于素材包生成</button><button id="frTrain">用于训练</button><small id="frMsg"></small></div><div id="frGrid" class="refs" style="max-height:340px;overflow:auto"></div><div id="frMore"></div></div><div id="libPanel" hidden style="margin-top:12px;border:1px solid #303b33;border-radius:10px;padding:10px">
+<div class="row" style="margin:12px 0;flex-wrap:wrap"><select id="libFolder"></select><input id="libQ" placeholder="按文件名搜索" style="padding:8px;border-radius:9px;border:1px solid #46564b;background:#27332b;color:inherit"><button id="libAll">全选/取消</button><small id="libSel">未选择</small></div>
+<div class="row" style="margin:8px 0;flex-wrap:wrap"><button id="libUse" class="primary" style="flex:0">用于素材包生成</button><select id="libTo"></select><button id="libMove">移动到</button><button id="libMk">新建文件夹</button><button id="libRen">改名当前文件夹</button><button id="libDel">删除所选</button><small id="libMsg"></small></div>
+<div id="libGrid" class="refs" style="max-height:300px;overflow:auto"></div><div id="libMore"></div>
+<h3 style="font-size:16px;margin:18px 0 6px">视频</h3><div id="libVids" class="muted"></div></div><small id="refCount">尚未添加参考照片</small><br><small>可添加多张物品或画面参考，最多 10 张。</small></div>
+<label for="description"><span class="step">3</span>描述你想要的图片</label><div id="spBar" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 6px"><select id="spSel" style="flex:1 1 160px;min-width:140px"><option value="">常用提示词…</option></select><button type="button" id="spSave">保存为常用</button><button type="button" id="spOver">覆盖保存</button><button type="button" id="spRen">改名</button><button type="button" id="spDel">删除</button><small id="spMsg" style="flex-basis:100%;color:#c5d4cb"></small></div><textarea id="description" placeholder="在这里输入图片描述…" maxlength="12000"></textarea>
+<!-- kind selector removed; hardcoded character --><div class="row block"><label for="size" style="margin:0">画质</label><select id="size"><option value="1024">1024 · 先试一张</option><option value="1536">1536 · 更清晰</option><option value="2048">2048 · 高清</option></select></div><div class="row" style="margin:8px 0;flex-wrap:wrap"><label style="margin:0;font-weight:400"><input type="checkbox" id="useLora" style="display:inline"> 使用已训练角色 LoRA</label><small id="loraMsg" class="muted" style="margin-left:8px"></small></div>
+<small style="display:block;margin:-14px 0 20px">参考模式保持首图比例；画质为目标像素量。首次建议 1024。</small>
+<div class="block" id="poseBox" style="border:1px solid #303b33;border-radius:10px;padding:10px;margin-bottom:18px"><label style="font-size:17px;margin:0 0 8px"><span class="step">2</span>动作 / 姿势 <small style="font-weight:400">可选 · 只改姿势不换脸</small></label><small class="muted" style="display:block">选一张动作参考图即可：上传后自动提取骨架（身体、手指、脸部表情点），生成时自动跟随，不用再点确认。不取那个人的长相和衣服；长相照上面的参考照片。用了动作图时，画面比例跟动作图。</small><div class="row" style="flex-wrap:wrap;margin:8px 0"><button type="button" id="poseChoose">＋ 选动作图（自动提骨架）</button><button type="button" id="poseClear" hidden>移除动作图</button><input id="poseFile" type="file" accept="image/png,image/jpeg,image/webp" hidden><small id="poseMsg"></small></div><div id="posePrev" class="refs"></div><div style="margin:8px 0"><b style="font-size:13px">姿势库</b> <small class="muted">提取过的骨架都存在这里，点「勾选」直接用，不用重新上传</small><div id="poseLib" class="refs" style="max-height:260px;overflow:auto;margin-top:6px"></div></div><div class="row" style="flex-wrap:wrap;margin:6px 0"><label for="poseStr" style="margin:0;font-weight:400">动作跟随强度 <!-- poseStrV removed --></label><!-- poseStr removed; fixed mild strength --><label style="margin:0;font-weight:400"><input type="checkbox" id="poseFace" checked style="display:inline"> 表情也跟着动作图</label></div><small class="muted">强度越高动作越像，但太高可能把长相拉偏；建议 0.5–0.8。</small></div><div class="row" style="margin:8px 0;flex-wrap:wrap;align-items:flex-start"><label style="margin:0;font-weight:600;font-size:15px;display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="posePoseOnly" style="width:22px;height:22px;margin:0;accent-color:#9dccad">按参考图只改动作</label><small class="muted" style="flex-basis:100%">勾选后点下方「生成图片」。以人物参考图为底图同图重绘：尽量保留人和背景，只按姿势库/动作图改姿势；不用角色 LoRA。默认强度 0.7</small></div>
+<div class="row"><button class="primary" id="generate" disabled>生成图片</button><button id="cancel" hidden>取消</button></div><div id="status" role="status" aria-live="polite">等待连接本地模型…</div><div id="genQueue" class="muted" style="min-height:18px;white-space:pre-wrap;margin:4px 0 8px"></div><progress id="progress"></progress><small id="service"></small>
+</section><section class="preview"><div class="empty" id="empty"><span>▧</span>生成的图片会显示在这里<br>添加参考照片，也可以只写描述</div><div id="results"></div><div id="resultActions"></div></section></div><section style="margin-top:28px"><h2 style="margin:0 0 6px;font-size:19px">训练</h2><small class="muted">从云机 inputs 文件夹选参考照片（可多选，最多 10 张）。角色模式：保持角色造型、毛色、比例、画风和服饰配件，按 头部→正面全身→表情→俯视→仰视→侧面全身→背面全身 轮换出图；</small>
+<details id="fxPanel" style="margin:14px 0"><summary style="cursor:pointer;font-weight:600">固定提示词（内置规则，可修改）</summary><small class="muted">这里是默认会用的规则。改完点「保存」后，之后的素材包都按你改的来；「一键恢复默认」会删除你的修改。和下面的「自定义提示词」开关互不影响。</small>
+<div class="row" style="margin:10px 0;flex-wrap:wrap"><select id="fxGroup"><option value="character:standard">角色 · 标准20条</option><option value="character:advanced">角色 · 高级100条</option></select><button id="fxSave" class="primary" style="flex:0">保存</button><button id="fxReset">一键恢复默认</button><small id="fxMsg"></small></div>
+<label style="font-weight:400">角色 · 锁定规则（追加在每条后面）</label><textarea id="fxLockCP" style="min-height:70px"></textarea><label style="font-weight:400">角色 · 负面提示词（CFG=1 时基本不起作用）</label><textarea id="fxLockCN" style="min-height:50px"></textarea>
+<textarea id="fxLockIP" hidden style="display:none" style="min-height:70px"></textarea><textarea id="fxLockIN" hidden style="display:none" style="min-height:50px"></textarea>
+<div id="fxList" style="max-height:420px;overflow:auto"></div></details>
+<details id="linkDownloadPanel" open style="margin:16px 0;padding:14px;border:1px solid #46564b;border-radius:10px">
+<summary style="cursor:pointer;font-weight:600">粘贴链接下载到云机</summary>
+<p class="muted" style="margin:8px 0">支持磁力、https直链、抖音分享链接（可粘贴整段分享文字）。抖音至少需剩余 1GB；需要登录态时请改用视频库上传。下完会自动进视频库。刷新或关闭页面后继续下载。</p>
+<div class="row" style="flex-wrap:wrap"><input id="linkDownloadUrl" type="text" maxlength="8192" aria-label="下载链接" placeholder="可粘贴 磁力 / https直链 / 抖音分享链接" style="flex:1;min-width:180px;padding:10px;background:#141816;color:inherit;border:1px solid #46564b;border-radius:8px"><button id="linkDownloadStart" type="button">开始下载</button></div>
+<div id="linkDownloadMsg" role="status" aria-live="polite" style="margin:8px 0;overflow-wrap:anywhere"></div>
+<small id="linkDownloadDisk"></small><div id="linkDownloadJobs" style="max-height:440px;overflow:auto"></div>
+<small class="muted">文件保存在「链接下载」目录；下完会自动进视频库。取消会停止下载，已下载部分保留；磁力获取元数据时可能暂时没有百分比。</small>
+</details>
+<script>
+(function(){
+const el=id=>document.getElementById(id), start=el('linkDownloadStart'), msg=el('linkDownloadMsg');
+const labels={active:'下载中',waiting:'排队中',paused:'已暂停',complete:'已完成',error:'失败',cancelled:'已取消'};
+const size=n=>{n=Number(n)||0;return n>=1073741824?(n/1073741824).toFixed(2)+'GB':n>=1048576?(n/1048576).toFixed(1)+'MB':n>=1024?(n/1024).toFixed(1)+'KB':n+'B'};
+let timer;
+async function call(path,data){const r=await fetch('/api/link-downloads'+path,{credentials:'same-origin',cache:'no-store',...(data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{})});let d;try{d=await r.json()}catch{throw Error('下载服务未连接（HTTP '+r.status+'）')}if(!r.ok)throw Error(d.error||'需要登录后使用');return d}
+async function action(id,a){try{await call('/'+id,{action:a});msg.textContent=a==='cancel'?'已取消，下载的部分文件保留':'操作成功';await poll()}catch(e){msg.textContent=e.message}}
+function button(label,fn){const b=document.createElement('button');b.type='button';b.textContent=label;b.style.cssText='padding:5px 10px;font-size:13px';b.onclick=async()=>{b.disabled=true;try{await fn()}finally{b.disabled=false}};return b}
+function render(d){el('linkDownloadDisk').textContent='硬盘剩余 '+size(d.free)+(d.online?'':' · 下载引擎暂时未连接');
+const list=el('linkDownloadJobs');list.replaceChildren();
+if(!window.__ldSeenComplete){try{window.__ldSeenComplete=new Set(JSON.parse(localStorage.getItem('ldSeenComplete')||'[]'))}catch{window.__ldSeenComplete=new Set()}}
+const seen=window.__ldSeenComplete; let newly=0;
+for(const j of d.jobs||[]){if(j.status==='complete'&&j.id&&!seen.has(j.id)){seen.add(j.id);newly++;}}
+if(newly){try{localStorage.setItem('ldSeenComplete',JSON.stringify([...seen].slice(-200)))}catch{} window.studioBumpVlibNew&&window.studioBumpVlibNew(newly); window.studioToast&&window.studioToast(newly===1?'已自动进视频库':('已自动进视频库 ×'+newly));}
+for(const j of [...d.jobs].reverse()){
+const row=document.createElement('div');row.style.cssText='padding:10px 0;border-top:1px solid #303b33;overflow-wrap:anywhere';
+const title=document.createElement('div');title.textContent='任务 '+j.id.slice(0,8)+' · '+(labels[j.status]||j.status);row.append(title);
+const info=document.createElement('small');info.textContent=(j.total?Math.min(100,j.completed/j.total*100).toFixed(1)+'% · '+size(j.completed)+' / '+size(j.total):(j.engine==='douyin'?'正在解析抖音或等待大小 · 已下 ':'等待大小或磁力元数据 · 已下 ')+size(j.completed))+' · '+size(j.speed)+'/s';row.append(info);
+const p=document.createElement('progress');p.style.display='block';if(j.total){p.max=j.total;p.value=j.completed}row.append(p);
+if(j.error){const e=document.createElement('div');e.className='error';e.textContent=j.error;row.append(e)}
+const acts=document.createElement('div');acts.className='row';acts.style.flexWrap='wrap';
+if(['active','waiting'].includes(j.status))acts.append(button('暂停',()=>action(j.id,'pause')));
+if(['paused','error'].includes(j.status))acts.append(button(j.status==='error'?'重试':'继续',()=>action(j.id,'resume')));
+if(!['complete','cancelled'].includes(j.status))acts.append(button('取消',()=>action(j.id,'cancel')));
+if(j.status==='complete'){const go=button('去视频库查看',async()=>{window.studioClearVlibNew&&window.studioClearVlibNew();const tab=document.getElementById('tab-video');if(tab)tab.click();const vl=document.getElementById('videoLibrary');if(vl)vl.open=true;msg.textContent='已打开视频库'});go.className='primary';go.style.cssText='padding:5px 10px;font-size:13px;font-weight:700';acts.append(go);for(const v of j.videos||[]){const b=button('选用到抽帧',async()=>{const s=el('vdList');if(!s)throw Error('视频选择框未找到');if(![...s.options].some(o=>o.value===v))s.add(new Option(v,v));s.value=v;const tab=document.getElementById('tab-video');if(tab)tab.click();s.scrollIntoView({behavior:'smooth',block:'center'});msg.textContent='已选中，可点「抽帧」'});b.style.opacity='.75';acts.append(b)}}
+if(j.files&&j.files.length){const f=document.createElement('div');f.className='muted';f.textContent=j.files.join('、');row.append(f)}
+row.append(acts);list.append(row)}
+if(!d.jobs.length)list.textContent='还没有下载任务';}
+async function poll(){clearTimeout(timer);try{const d=await call('');const sig=JSON.stringify((d.jobs||[]).map(j=>({id:j.id,status:j.status,completed:j.completed,total:j.total,speed:j.speed,error:j.error||''})));const list=el('linkDownloadJobs');if(list.dataset.signature===sig){el('linkDownloadDisk').textContent='硬盘剩余 '+size(d.free)+(d.online?'':' · 下载引擎暂时未连接');const active=(d.jobs||[]).some(j=>['active','waiting'].includes(j.status));timer=setTimeout(poll,active?3000:8000);return}list.dataset.signature=sig;render(d);const active=(d.jobs||[]).some(j=>['active','waiting'].includes(j.status));timer=setTimeout(poll,active?3000:8000)}catch(e){el('linkDownloadDisk').textContent=e.message;timer=setTimeout(poll,8000)}}
+start.onclick=async()=>{start.disabled=true;try{await call('',{link:el('linkDownloadUrl').value.trim()});el('linkDownloadUrl').value='';msg.textContent='已加入下载队列';await poll()}catch(e){msg.textContent=e.message}finally{start.disabled=false}};
+el('linkDownloadUrl').addEventListener('keydown',e=>{if(e.key==='Enter'&&!start.disabled){e.preventDefault();start.click()}});
+poll();
+})();
+</script>
+
+<div class="row" style="margin:14px 0;flex-wrap:wrap"><button id="vdUpBtn">上传视频（分片续传）</button><label style="margin:0;font-weight:400"><input type="checkbox" id="vdLive" checked style="display:inline"> 边传边抽帧+分类</label><input id="vdFile" type="file" accept=".mp4,.mov,.mkv,.webm,.m4v,video/*"><select id="vdList"><option value="">（先上传视频）</option></select><label style="margin:0;font-weight:400"><input type="checkbox" id="vdPerson" checked style="display:inline"> 只留有真人的帧（动画角色请取消）</label><button id="vdExtract">抽帧（每秒1张，筛选+智能分类）</button><button id="vdStop" hidden>停止</button></div><progress id="vdUpProg" style="display:none"></progress><div id="vdUpMsg" class="muted" style="white-space:pre-wrap"></div><progress id="vdProg" style="display:none"></progress><div id="vdMsg" class="muted" style="white-space:pre-wrap"></div>
+<div class="row" style="margin:10px 0;flex-wrap:wrap"><b>角度覆盖</b><select id="cvSrc"></select><button id="cvShow">查看覆盖</button><button id="cvRetag">重新智能分类</button></div><div id="cvMsg" class="muted" style="white-space:pre-wrap"></div>
+<div class="row" style="margin:14px 0;flex-wrap:wrap"><b>人物小模型训练</b><select id="trSrc"><option value="">用上面选中的视频</option></select><input id="trTrig" placeholder="触发词(英文,可空)" style="width:150px"><button id="trStart">一键训练（抽帧→筛选→智能分类→均衡挑图→训练）</button><button id="trStop" hidden>停止训练</button></div><div class="row" style="margin:6px 0;flex-wrap:wrap"><b>选择已有训练包</b><select id="trDs"><option value="">（加载中…）</option></select><button id="trDsStart">用这个训练包开始训练</button><small class="muted">不用重新上传；训练中每隔一段会出预览图，显示在下面「训练实时效果」</small></div><div class="row" style="margin:6px 0;flex-wrap:wrap"><button id="cpUpBtn">上传训练包（.zip，Mac 抽好的）</button><input id="cpFile" type="file" accept=".zip,application/zip" hidden><label><input type="checkbox" id="cpAuto" checked> 上传后自动开训</label><button id="cpTrain" hidden class="primary" style="flex:0">开始训练</button></div><progress id="cpProg" style="display:none" max="100"></progress><div id="cpMsg" class="muted" style="white-space:pre-wrap"></div><progress id="trProg" style="display:none"></progress><div id="trMsg" class="muted" style="white-space:pre-wrap"></div>
+<div id="trPrevBox" style="margin:10px 0;border:1px solid #303b33;border-radius:10px;padding:10px">
+<b>训练预览</b> <small class="muted" id="trPrevMeta">训练时每 N 步自动出样张，显示在这里</small>
+<div id="trPrevGrid" class="refs" style="max-height:320px;overflow:auto;margin-top:8px"></div>
+</div>
+<details id="tpBox" style="margin:6px 0 12px"><summary style="cursor:pointer">勾选照片去训练（素材库 / 批次成品，一张一张选）</summary>
+<div class="row" style="margin:8px 0;flex-wrap:wrap"><select id="tpSrc"></select><button id="tpLoad">显示图片</button><button id="tpGood" hidden>只选没淘汰且达线的</button><button id="tpAll">全选/取消</button><small id="tpSel">未选择</small><button id="tpStart">用勾选的图训练</button></div>
+<div id="tpGrid" class="refs" style="max-height:360px;overflow:auto"></div><div id="tpMore"></div></details>
+
+<div class="row" style="margin:14px 0"><button id="pkUpBtn">选择照片上传</button><input id="pkUpFiles" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple><button id="pkRefresh">刷新照片列表</button><button id="pkImgTog" type="button">展开图片</button><button id="pkAll">全选/取消</button><button id="pkDel">删除所选照片</button><small id="pkUpMsg"></small><small id="pkSel">未选择</small></div><div id="pkInputs" class="refs" style="max-height:260px;overflow:auto"></div>
+<div class="row" style="margin:14px 0"><label for="pkKind" hidden style="display:none">模式</label><select id="pkKind" hidden style="display:none"><option value="character">角色</option></select></div><div class="row" style="margin:14px 0"><label style="margin:0;font-weight:400"><input type="checkbox" id="pkCustom" style="display:inline"> 自定义提示词（打开后完全只用你写的提示词，不追加锁定规则）</label><select id="pkEditMode"><option value="standard">编辑标准20条</option></select></div><div id="pkEdit" hidden style="max-height:360px;overflow:auto;margin-bottom:10px"></div><div class="row" style="margin:18px 0 8px;flex-wrap:wrap"><label for="pkSize" style="margin:0">画质</label><select id="pkSize"><option value="1024">1024</option><option value="1536">1536</option></select>
+<button class="primary" id="pkStd">标准素材包 · 20 张</button><button class="primary" id="pkAdv" hidden style="display:none">高级素材包 · 100 张</button><button id="pkResume" hidden>继续本批（全部参考）</button><button id="pkStop" hidden>停止</button></div>
+<div id="pkStatus" style="white-space:pre-wrap;min-height:24px"></div><progress id="pkProg" style="display:none"></progress>
+<div id="qaBanner" hidden style="background:#26402f;border:1px solid #4f7a5c;border-radius:10px;padding:10px 14px;margin:10px 0"></div>
+<div id="qaBar" hidden style="display:none" class="row" style="margin:10px 0;flex-wrap:wrap"><label style="margin:0;font-weight:400">像不像分数线 <b id="qaThrV"></b></label><input type="range" id="qaThr" min="0" max="100" step="1" style="width:180px"><button id="qaApply">按分数线整理当前批次</button><label style="margin:0;font-weight:400">自动重试 <select id="qaRetries"><option>0</option><option>1</option><option>2</option><option>3</option></select> 次</label><select id="qaSort"><option value="n">按出图顺序</option><option value="score">按分数高→低</option></select><label style="margin:0;font-weight:400"><input type="checkbox" id="qaShowRej" style="display:inline"> 显示淘汰的图</label><small id="qaMsg"></small></div>
+<details id="qaStatsBox" style="margin:6px 0"><summary style="cursor:pointer">问题本（哪些镜头最常不过关、原因）</summary><div id="qaStats" class="muted" style="white-space:pre-wrap"></div></details>
+<h3 style="font-size:16px;margin:20px 0 8px">历史批次</h3><div id="pkBatches"></div><div id="pkViewTitle" class="muted" style="margin-top:14px"></div><div id="pkView" class="refs"></div></section>
+<section style="margin-top:28px"><details id="hiPanel"><summary style="cursor:pointer;font-size:19px;font-weight:600">单张生成历史</summary>
+<div class="row" style="margin:10px 0"><button id="hiPrev">上一页</button><small id="hiInfo"></small><button id="hiNext">下一页</button><button id="hiAll">全选本页/取消</button><button id="hiDel">删除所选</button><small id="hiSel">未选择</small></div><div id="hiGrid" class="refs"></div></details></section>
+</main>
+<script>
+var imgShow={pk:false,fr:false};function imgTogBind(k,fn){var b=document.getElementById(k+'ImgTog');if(!b)return;b.onclick=function(){imgShow[k]=!imgShow[k];b.textContent=imgShow[k]?'收起图片':'展开图片';try{var p=fn();if(p&&p.catch)p.catch(function(){})}catch(e){}}}
+imgTogBind('pk',function(){return pkLoad()});imgTogBind('fr',function(){return frRender()});
+
+let token='__STUDIO_TOKEN__';
+const StudioCache=(()=>{
+let key=null,dbPromise=null,unlocking=null,epoch=0,queue=Promise.resolve();
+const TTL=3*86400000,LIMIT=500*1024*1024,SS_JWK='studio-cache-jwk-v1',SS_PW='studio-cache-pw-once';
+const channel=typeof BroadcastChannel!=='undefined'?new BroadcastChannel('studio-cache-logout'):null;
+const log=(ev,extra)=>{try{const row={t:Date.now(),ev,...(extra||{})};(window.__studioCacheLog=window.__studioCacheLog||[]).push(row);if(window.__studioCacheLog.length>200)window.__studioCacheLog.shift();if(window.__studioCacheDebug)console.debug('[StudioCache]',ev,extra||'')}catch{}};
+function db(){return dbPromise||(dbPromise=new Promise((resolve,reject)=>{const r=indexedDB.open('studio-encrypted-images-v2',2);r.onupgradeneeded=()=>{const d=r.result;if(!d.objectStoreNames.contains('images'))d.createObjectStore('images',{keyPath:'id'});if(!d.objectStoreNames.contains('meta'))d.createObjectStore('meta');if(!d.objectStoreNames.contains('partials'))d.createObjectStore('partials',{keyPath:'id'})};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)}))}
+async function tx(store,mode,fn){const d=await db();return new Promise((resolve,reject)=>{const t=d.transaction(store,mode),r=fn(t.objectStore(store));let value;r.onsuccess=()=>value=r.result;t.oncomplete=()=>resolve(value);t.onerror=t.onabort=()=>reject(t.error||Error('缓存事务失败'))})}
+function cacheUrl(url,kind){const u=String(url||'');const base=u.replace(/#.*$/,'');const k=(kind||'view').toLowerCase();return k==='thumb'?base+'#thumb':base+'#view'}
+async function idOf(url){const bytes=new TextEncoder().encode(url);const digest=await crypto.subtle.digest('SHA-256',bytes);return Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('')}
+async function persistKey(k){try{const jwk=await crypto.subtle.exportKey('jwk',k);sessionStorage.setItem(SS_JWK,JSON.stringify(jwk))}catch{}}
+async function restoreKey(){try{const raw=sessionStorage.getItem(SS_JWK);if(!raw||!crypto.subtle)return null;const jwk=JSON.parse(raw);return await crypto.subtle.importKey('jwk',jwk,{name:'AES-GCM'},false,['encrypt','decrypt'])}catch{return null}}
+async function deriveFromPassword(password){let salt=await tx('meta','readonly',s=>s.get('salt'));if(!salt){salt=crypto.getRandomValues(new Uint8Array(16));await tx('meta','readwrite',s=>s.put(salt,'salt'))}const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:310000,hash:'SHA-256'},material,{name:'AES-GCM',length:256},true,['encrypt','decrypt'])}
+async function ensureAuth(){const auth=await fetch('/api/health',{credentials:'same-origin',cache:'no-store'});if(!auth.ok){await clear();location.replace('/');return false}return true}
+async function unlock(forcePrompt=false){if(key)return key;if(unlocking)return unlocking;const e=epoch;unlocking=(async()=>{if(!crypto.subtle)return null;if(!forcePrompt){const restored=await restoreKey();if(restored){key=restored;log('unlock-restore');return key}let once=null;try{once=sessionStorage.getItem(SS_PW);if(once)sessionStorage.removeItem(SS_PW)}catch{}if(once){const derived=await deriveFromPassword(once);if(e!==epoch)return null;key=derived;await persistKey(derived);log('unlock-pw-once');return key}}const password=prompt('输入工作台登录密码，解锁加密大图缓存（本次浏览器会话内刷新仍可用，退出登录会清空）');if(!password)return null;const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({password})});if(!r.ok)throw Error('密码错误');const derived=await deriveFromPassword(password);if(e!==epoch)return null;key=derived;await persistKey(derived);log('unlock-prompt');return key})().finally(()=>unlocking=null);return unlocking}
+async function warm(){if(key)return key;if(!(await ensureAuth()))return null;const k=await unlock(false);return k}
+async function prune(){const rows=await tx('images','readonly',s=>s.getAll());rows.sort((a,b)=>(a.created||0)-(b.created||0));let size=rows.reduce((n,r)=>n+(r.size||0),0);const now=Date.now();for(const r of rows){if(now-(r.created||0)>=TTL||size>LIMIT){await tx('images','readwrite',s=>s.delete(r.id));size-=(r.size||0);log('prune',{id:r.id.slice(0,8)})}}try{const parts=await tx('partials','readonly',s=>s.getAll());for(const p of parts||[]){if(now-(p.updated||0)>=TTL)await tx('partials','readwrite',s=>s.delete(p.id))}}catch{}}
+async function load(url,opts){const passive=!!(opts&&opts.passive);const kind=(opts&&opts.kind)||'view';if(!(await ensureAuth()))return null;await prune();const k=passive?(key||await restoreKey().then(x=>{if(x)key=x;return key})):(await unlock(false));if(!k){if(!key)key=null;log('miss-nokey',{kind});return null}const e=epoch,cu=cacheUrl(url,kind),i=await idOf(cu),r=await tx('images','readonly',s=>s.get(i));if(!r){log('miss',{kind,url:cu});return null}if(Date.now()-(r.created||0)>=TTL){await tx('images','readwrite',s=>s.delete(i));log('expired',{kind});return null}try{const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:r.iv,additionalData:new TextEncoder().encode(i)},k,r.data);if(e!==epoch)return null;log('hit',{kind,size:r.size});return new Blob([plain],{type:r.type||'image/jpeg'})}catch{await tx('images','readwrite',s=>s.delete(i));log('decrypt-fail',{kind});return null}}
+async function save(url,blob,kind='view'){const e=epoch,k=key;if(!k||!blob||blob.size>LIMIT)return;const cu=cacheUrl(url,kind),i=await idOf(cu),iv=crypto.getRandomValues(new Uint8Array(12)),data=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:new TextEncoder().encode(i)},k,await blob.arrayBuffer());if(e!==epoch)return;await tx('images','readwrite',s=>s.put({id:i,iv,data,type:blob.type||'image/jpeg',size:data.byteLength,created:Date.now(),kind,url:cu}));await prune();log('put',{kind,size:data.byteLength})}
+function put(url,blob,kind='view'){queue=queue.catch(()=>{}).then(()=>save(url,blob,kind));return queue}
+async function loadPartial(url,kind='view'){const cu=cacheUrl(url,kind),i=await idOf(cu);return tx('partials','readonly',s=>s.get(i))}
+async function savePartial(url,kind,state){const cu=cacheUrl(url,kind),i=await idOf(cu);const row={id:i,url:cu,kind,offset:state.offset|0,total:state.total==null?null:state.total,type:state.type||'image/jpeg',parts:state.parts||[],updated:Date.now()};await tx('partials','readwrite',s=>s.put(row));log('partial-save',{kind,offset:row.offset,total:row.total});return row}
+async function clearPartial(url,kind='view'){const cu=cacheUrl(url,kind),i=await idOf(cu);await tx('partials','readwrite',s=>s.delete(i))}
+async function clear(broadcast=true){epoch++;key=null;window.dispatchEvent(new Event('studio-cache-clear'));await queue.catch(()=>{});try{sessionStorage.removeItem(SS_JWK);sessionStorage.removeItem(SS_PW)}catch{}try{await tx('images','readwrite',s=>s.clear());await tx('partials','readwrite',s=>s.clear())}catch{}if(broadcast&&channel)channel.postMessage('clear');log('clear')}
+if(channel)channel.onmessage=()=>clear(false).catch(()=>{}).finally(()=>location.replace('/'));
+setInterval(()=>prune().catch(()=>{}),60000);prune().catch(()=>{});
+warm().catch(()=>{});
+return {get:(url,passiveOrOpts)=>{if(typeof passiveOrOpts==='boolean')return load(url,{passive:passiveOrOpts,kind:'view'});return load(url,passiveOrOpts||{})},put,clear,warm,unlock,loadPartial,savePartial,clearPartial,cacheUrl,log};
+})();
+document.getElementById('studioLogout').onclick=async()=>{try{const r=await fetch('/api/logout',{method:'POST',headers:{'X-Studio-Token':token},credentials:'same-origin'});if(!r.ok)throw Error('退出失败');await StudioCache.clear().catch(()=>{});location.replace('/')}catch(e){alert(e.message)}};
+window.addEventListener('pageshow',e=>{if(e.persisted){/* keep session; do not location.reload */}});
+window.addEventListener('studio-cache-clear',()=>{setTimeout(()=>document.querySelectorAll('img,video').forEach(el=>{el.removeAttribute('src');el.removeAttribute('srcset');el.removeAttribute('poster')}),0)});
+const StudioThumbHD=(()=>{
+const items=new Map();let active=0,epoch=0,asked=false,stopped=false;
+function clean(url){try{const u=new URL(url,location.origin);['thumb','download','t','preview','kind','chunk','size'].forEach(k=>u.searchParams.delete(k));return u.pathname+(u.searchParams.size?'?'+u.searchParams:'')}catch{return String(url||'').split('#')[0].replace(/[?&](thumb=1|download=1|t=\d+|preview=1|kind=\w+|chunk=\d+|size=\d+)/g,'').replace(/\?&/,'?').replace(/[?&]$/,'')}}
+async function request(url,signal,body){const r=await fetch(url,{signal,credentials:'same-origin',cache:'no-store',headers:{'X-Studio-Token':token,...(body?{'Content-Type':'application/json'}:{})},...(body?{method:'POST',body:JSON.stringify(body)}:{})});if(!r.ok)throw Error('HTTP '+r.status);return r}
+async function fetchBlobChunks(fileUrl,signal,kind,baseUrl){const CHUNK=32768;let offset=0,total=null,type='image/jpeg',parts=[];try{const part=await StudioCache.loadPartial(baseUrl,kind);if(part&&Array.isArray(part.parts)&&part.offset>0){parts=part.parts.map(p=>p instanceof ArrayBuffer?p:(p&&p.buffer?p.buffer:p));offset=part.offset|0;total=part.total;type=part.type||type;StudioCache.log('partial-resume',{kind,offset,total})}}catch{}
+async function one(u){let last;for(let t=1;t<=6;t++){if(signal&&signal.aborted)throw new DOMException('Aborted','AbortError');try{const r=await fetch(u,{signal,credentials:'same-origin',cache:'no-store',headers:{'X-Studio-Token':token}});if(!r.ok)throw Error('HTTP '+r.status);const buf=await r.arrayBuffer();return{r,buf}}catch(err){last=err;if(err.name==='AbortError')throw err;await new Promise(r=>setTimeout(r,180*t))}}throw last}
+for(;;){const sep=fileUrl.includes('?')?'&':'?';const {r,buf}=await one(fileUrl+sep+'chunk='+offset+'&size='+CHUNK);const tl=r.headers.get('X-Total-Length');if(tl)total=parseInt(tl,10);const ct=r.headers.get('Content-Type');if(ct&&ct.indexOf('image/')===0)type=ct.split(';')[0].trim();if(!buf.byteLength){if(total==null||offset>=total)break;throw Error('empty chunk')}parts.push(buf);offset+=buf.byteLength;if(offset>32*1024*1024)throw Error('图片过大');try{await StudioCache.savePartial(baseUrl,kind,{offset,total,type,parts})}catch{}if(total!=null&&offset>=total)break;if(total==null&&buf.byteLength<CHUNK)break}
+if(!offset)throw Error('空图片');if(total!=null&&offset<total)throw Error('truncated');const blob=new Blob(parts,{type});try{await StudioCache.clearPartial(baseUrl,kind)}catch{}return blob}
+async function sourceView(url,signal){let st=await(await request('/api/lb/prepare',signal,{url})).json();for(let n=0;!st.view_ready&&n<80;n++){await new Promise(r=>setTimeout(r,200));st=await(await request('/api/lb/status?url='+encodeURIComponent(url),signal)).json()}if(!st.view_ready)throw Error('高清图尚未就绪');return fetchBlobChunks('/api/lb/file?kind=view&url='+encodeURIComponent(url),signal,'view',url)}
+async function sourceThumb(smallUrl,signal,baseUrl){try{return await fetchBlobChunks(smallUrl.includes('/api/lb/')?smallUrl:('/api/lb/file?kind=preview&url='+encodeURIComponent(baseUrl)),signal,'thumb',baseUrl)}catch{const r=await request(smallUrl,signal);const ct=r.headers.get('Content-Type')||'';if(!ct.startsWith('image/')&&!ct.includes('octet-stream'))throw Error('不是图片');const b=await r.blob();if(!b.size)throw Error('空缩略图');return b}}
+function release(it){if(it.view){URL.revokeObjectURL(it.view);it.view=null}if(it.thumbView){URL.revokeObjectURL(it.thumbView);it.thumbView=null}if(it.img){it.img.src=it.small}if(it.controller)it.controller.abort()}
+function pump(){if(stopped)return;for(const [img,it] of items){if(!img.isConnected){release(it);observer?.unobserve(img);items.delete(img)}}const pending=[...items.values()].filter(it=>it.visible&&!it.view&&!it.running&&it.fails<4);pending.sort((a,b)=>Math.abs(a.img.getBoundingClientRect().top)-Math.abs(b.img.getBoundingClientRect().top));while(active<3&&pending.length){const it=pending.shift(),e=epoch;it.running=true;active++;it.controller=new AbortController();(async()=>{await StudioCache.warm().catch(()=>{});let blob=null;const getOpts=asked?{passive:true,kind:'view'}:{passive:false,kind:'view'};if(!asked)asked=true;blob=await StudioCache.get(it.url,getOpts).catch(()=>null);if(e!==epoch||!it.visible||!it.img.isConnected)return;if(!blob){blob=await sourceView(it.url,it.controller.signal);if(e!==epoch||!it.visible)return;await StudioCache.put(it.url,blob,'view').catch(()=>{})}if(e!==epoch||!it.visible||!it.img.isConnected)return;it.view=URL.createObjectURL(blob);it.img.src=it.view;it.img.dataset.hdReady='1';it.fails=0})().catch(err=>{if(err.name!=='AbortError'){it.fails=(it.fails||0)+1;StudioCache.log('thumbhd-fail',{n:it.fails,msg:String(err.message||err)})}}).finally(()=>{it.running=false;it.controller=null;active--;pump()})}}
+async function hydrateThumb(it){if(it.thumbReady||it.thumbRunning)return;it.thumbRunning=true;try{let blob=await StudioCache.get(it.url,{passive:true,kind:'thumb'}).catch(()=>null);if(blob){it.thumbView=URL.createObjectURL(blob);if(it.img&&!it.view)it.img.src=it.thumbView;it.thumbReady=true;StudioCache.log('thumb-hit-or-restore',{url:it.url});return}const ctrl=new AbortController();try{blob=await sourceThumb(it.small,ctrl.signal,it.url);if(!blob)return;/* network first so UI never waits on cache unlock prompt */await StudioCache.warm().catch(()=>{});await StudioCache.put(it.url,blob,'thumb').catch(()=>{});it.thumbView=URL.createObjectURL(blob);if(it.img&&!it.view)it.img.src=it.thumbView;it.thumbReady=true;StudioCache.log('thumb-put',{url:it.url})}catch(err){StudioCache.log('thumb-fetch-fail',{msg:String(err.message||err)});if(it.img&&!it.view&&!it.img.getAttribute('src'))it.img.src=it.small}}finally{it.thumbRunning=false}}
+const observer=typeof IntersectionObserver!=='undefined'?new IntersectionObserver(entries=>{for(const entry of entries){const it=items.get(entry.target);if(!it)continue;it.visible=entry.isIntersecting;if(!it.visible){if(it.view){release(it);it.fails=0}else it.fails=0}else{it.fails=0;hydrateThumb(it).catch(()=>{})}}pump()},{rootMargin:'120px',threshold:0}):null;
+function add(img,small,full=small){img.loading='lazy';img.decoding='async';img.removeAttribute('download');img.addEventListener('contextmenu',e=>e.preventDefault(),{passive:false});const url=clean(full);const it={img,small,url,visible:false,fails:0,thumbReady:false,thumbRunning:false};items.set(img,it);img.src=small;/* show auth thumb immediately; never wait on dark-cache prompt */(async()=>{let blob=await StudioCache.get(url,{passive:true,kind:'thumb'}).catch(()=>null);if(blob){it.thumbView=URL.createObjectURL(blob);if(!it.view)img.src=it.thumbView;it.thumbReady=true;StudioCache.log('thumb-instant',{url});return}hydrateThumb(it).catch(()=>{})})().catch(()=>{hydrateThumb(it).catch(()=>{})});if(observer)observer.observe(img);else{it.visible=true;pump()}}
+window.addEventListener('studio-cache-clear',()=>{stopped=true;epoch++;for(const it of items.values())release(it);items.clear();observer?.disconnect()});
+const mutation=new MutationObserver(()=>pump());mutation.observe(document.documentElement,{childList:true,subtree:true});
+return {add};
+})();
+
+const $=id=>document.getElementById(id);let references=[],job=null,jobList=[],busy=false,submitting=false,ready=false,pollTimer=null,queueTimer=null;
+let apiFails=0,apiRenewAt=0;
+async function renewSession(){if(Date.now()-apiRenewAt<4000)return false;apiRenewAt=Date.now();try{const r=await fetch('/?renew='+Date.now(),{cache:'no-store',credentials:'same-origin'});const h=await r.text();const m=h.match(/let token='([^']+)'/);if(r.ok&&m){token=m[1];return true}}catch(e){}return false}
+async function apiOnce(path,options){let r;try{r=await fetch(path,{...options,headers:{'X-Studio-Token':token,...(options.headers||{})}})}catch(e){const x=Error('公网超时，正在重试（隧道不稳时请稍后再试或换小一点的图）');x.retry=true;throw x}const txt=await r.text();let d;try{d=txt?JSON.parse(txt):{}}catch{const st=r&&r.status;let msg='本地服务返回异常';if(st===502||st===504)msg='公网超时，正在重试';else if(st)msg='本地服务返回异常 '+st;const x=Error((txt&&!/[<>]/.test(txt)?txt.slice(0,80):msg));x.status=st;x.retry=true;throw x}if(!r.ok||d.error){const st=r.status;let msg=d.error;if(!msg){if(st===502||st===504)msg='公网超时，正在重试';else if(String(path).includes('/api/pose')&&!String(path).includes('/job'))msg='正在提取骨架，大约1分钟';else if(String(path).includes('/api/generate')||String(path).includes('/api/jobs'))msg='出图中，请稍候';else msg='操作失败 '+st}const e=Error(msg);e.status=st;e.retry=st===401||st===403||st===502||st===504||(st===404&&String(path).startsWith('/api/')&&!d.error);throw e}return d}
+async function api(path,options={}){const body=options.body;const again=!(body instanceof FormData)||true;try{const d=await apiOnce(path,options);apiFails=0;return d}catch(e){if(!e.retry)throw e;apiFails++;if(again&&await renewSession()){try{const d=await apiOnce(path,options);apiFails=0;return d}catch(e2){if(!e2.retry)throw e2;apiFails++;e=e2}}if(apiFails>=3){const x=Error('工作台连接已失效：请关掉这个页面，重新打开 http://'+location.host);x.status=e.status;throw x}throw e}}
+const json=data=>({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+function status(text,error=false){$('status').textContent=text;$('status').className=error?'error':''}
+function paintQueueList(q){const gq=$('genQueue');if(!gq)return;if(!q||!q.length){gq.textContent=busy?'当前无其他排队任务':'';return;}const lines=['任务队列（'+q.length+'）——生成中仍可继续勾选并点生成加塞：'];q.forEach((a,i)=>{const st=a.state==='running'?'进行中':(a.state==='queued'?'排队中':(a.state||''));lines.push((i+1)+'. ['+st+'] '+(a.label||a.message||a.id||''))});gq.textContent=lines.join('\n')}
+async function refreshQueue(){try{const d=await api('/api/queue');paintQueueList(d.queue||[])}catch(e){}}
+function paintJob(state){const tel=state.telemetry||{};let cur=Number(state.current),tot=Number(state.total);if(!Number.isFinite(cur))cur=Number(tel.current);if(!(tot>0))tot=Number(tel.total);let msg=state.message||'';const generic=/本地任务已开始|等待模型处理|等待详细进度/.test(msg);const bar=$('progress');bar.style.display='block';if(Number.isFinite(cur)&&tot>0){bar.max=tot;bar.value=Math.max(0,Math.min(tot,cur));const step='第 '+cur+' / '+tot+' 步';if(generic||msg.indexOf('第 ')<0){const lab=(tel.label&&!/已接到任务|任务已开始|等待详细进度/.test(tel.label))?tel.label:'图像采样';msg=lab+'：'+step}}else{bar.removeAttribute('value');if(generic){msg=(tel.label&&tel.stage&&tel.stage!=='starting'&&tel.stage!=='queued')?(tel.label+'…'):'已接到任务，正在载入模型，采样步数马上显示…'}else if(tel.label&&msg.indexOf(tel.label)<0&&tel.stage&&tel.stage!=='queued'){msg=tel.label+'… '+(msg||'')}}const q=state.queue||[];paintQueueList(q);if(q.length>1){msg+='\n（队列共 '+q.length+' 个任务，详见下方）'}status(msg,state.state==='error')}
+
+function controls(){/* 生成中仍可勾选/改参考/加任务排队；仅提交瞬间防误触 */$('generate').disabled=!ready||submitting;$('cancel').hidden=!job;if($('description'))$('description').disabled=false;if($('size'))$('size').disabled=false}
+function refDrop(ref,index){if(ref.url&&ref.url.startsWith('blob:'))URL.revokeObjectURL(ref.url);references.splice(index,1);if(ref.lib&&typeof libSel!=='undefined'&&libSel.has(ref.lib)){libSel.delete(ref.lib);if(typeof libRender==='function'&&!$('libPanel').hidden)libRender();libCount()}if(ref.hist&&hiSel.has(ref.hist)){hiSel.delete(ref.hist);hiMark();if($('hiPanel').open)hiLoad().catch(()=>{})}showReferences()}
+function showReferences(){const on=references.filter(r=>!r.off).length;$('refCount').textContent=references.length?'已勾选 '+on+' / '+references.length+' 张参考照片（点图放大，点「勾选」选中/取消）':'尚未添加参考照片';$('refs').replaceChildren();references.forEach((ref,index)=>{const box=document.createElement('div');box.className='ref';box.style.cssText='width:66px;display:flex;flex-direction:column;gap:2px;position:relative';const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=ref.url;img.alt='参考照片';img.title='点图片放大预览';img.style.cssText='width:66px;height:76px;object-fit:cover;border-radius:6px;display:block;cursor:zoom-in';img.style.outline=ref.off?'none':'3px solid #9dccad';img.style.opacity=ref.off?'0.45':'1';const full=ref.url.startsWith('blob:')?ref.url:ref.url.replace(/[?&]thumb=1$/,'');const refGal=references.map(r=>{const f=r.url.startsWith('blob:')?r.url:r.url.replace(/[?&]thumb=1$/,'');return{url:f,thumb:r.url}});img.onclick=e=>{e.preventDefault();e.stopPropagation();openLB(full,img.src,refGal)};const row=document.createElement('label');row.style.cssText='display:flex;align-items:center;gap:4px;min-height:40px;padding:2px 0;cursor:pointer;user-select:none;-webkit-user-select:none';row.title='勾选后用于生成';const ck=document.createElement('input');ck.type='checkbox';ck.checked=!ref.off;ck.disabled=false;ck.style.cssText='width:22px;height:22px;margin:0;flex:0 0 22px;accent-color:#9dccad';ck.onclick=e=>e.stopPropagation();ck.onchange=()=>{ref.off=!ck.checked;showReferences()};const tip=document.createElement('span');tip.textContent='勾选';tip.style.cssText='font-size:12px;color:#c5d4cb';row.append(ck,tip);row.onclick=e=>e.stopPropagation();const x=document.createElement('a');x.href='#';x.textContent='移除';x.style.cssText='font-size:11px;color:#efa79b';x.onclick=e=>{e.preventDefault();e.stopPropagation();refDrop(ref,index)};box.append(img,row,x);$('refs').append(box)})}
+$('choose').onclick=()=>$('files').click();$('files').onchange=()=>{const files=[...$('files').files];$('files').value='';if(references.length+files.length>10){status('最多添加 10 张参考照片。',true);return}if(files.some(file=>file.size>25*1024*1024)){status('单张照片不得超过 25 MB。',true);return}for(const file of files)references.push({id:null,file,url:URL.createObjectURL(file)});showReferences();status('已添加 '+references.length+' 张参考照片'+(busy?'（当前有任务在跑/排队，可继续点生成加塞）':'，点击生成时将在本机读取。'))};
+async function check(){try{const state=await api('/api/health');ready=state.ready;$('service').textContent=ready?state.message:'';for(const option of $('size').options)option.disabled=!state.sizes.includes(option.value);if(!busy&&!job)status(ready?'准备好了，写好描述后点击生成。':state.message);controls()}catch(e){ready=false;$('service').textContent=e.message;controls()}}
+$('generate').onclick=async()=>{if(submitting){status('正在提交这一次（防误触），请稍候…',true);return}const only=poseOnlyArmed();if(only){if(!pose){status('请先勾选或上传动作/姿势',true);return}if(!references.length){status('请先添加人物参考照片',true);return}if($('useLora'))$('useLora').checked=false;}else if(!$('description').value.trim()){status('请先填写图片描述',true);$('description').focus();return}submitting=true;controls();const reqId=(crypto.randomUUID?crypto.randomUUID().replace(/-/g,''):('r'+Date.now()+Math.random().toString(16).slice(2))).slice(0,32);status((busy?'已有任务在跑，正在加塞排队…\n':'')+(only?'只改动作 · 步骤0：开始提交…':'步骤0：开始提交…'));$('progress').style.display='block';if(!busy)$('progress').removeAttribute('value');try{for(let i=0;i<references.length;i++){const ref=references[i];if(ref.id)continue;status('正在准备参考照片 '+(i+1)+' / '+references.length+'…');if(ref.hist&&!window.noHistExisting){try{ref.id=(await apiOnce('/api/upload-existing',json({history:ref.hist}))).id;if(ref.id)continue}catch(e){window.noHistExisting=true}}if(!ref.file&&ref.hist)ref.file=await hiFetchFile(ref.hist);if(ref.lib&&!window.noUploadExisting){try{ref.id=(await apiOnce('/api/upload-existing',json({name:ref.lib}))).id;if(ref.id)continue}catch(e){if(e.status===404||e.status===405)window.noUploadExisting=true}}if(!ref.file&&ref.lib)ref.file=await libFetchFile(ref.lib);const form=new FormData();form.append('image',ref.file);ref.id=(await api('/api/upload',{method:'POST',body:form})).id}status(only?'只改动作 · 步骤0：提交任务…':'步骤0：提交任务…');const result=await api('/api/generate',json({request_id:reqId,description:$('description').value||'',size:Number($('size').value),custom:true,kind:'character',references:references.filter(r=>!r.off).map(r=>r.id),use_lora:only?false:($('useLora')?$('useLora').checked:false),pose_only:!!only,...(pose?{pose:pose.id,pose_strength:0.45,pose_face:$('poseFace').checked}:{})}));job=result.id;if(job&&jobList.indexOf(job)<0)jobList.push(job);sessionStorage.setItem('studio-job',job);sessionStorage.setItem('studio-jobs',JSON.stringify(jobList));busy=true;submitting=false;paintQueueList(result.queue||[]);status((result.deduped?'（同一次提交已合并）':'')+(only?'只改动作 · ':'')+'任务已受理'+(result.queue&&result.queue.length>1?'，已入队第 '+result.queue.length+' 个':'')+'，进度如下…');controls();if(!pollTimer)poll();refreshQueue()}catch(e){if(/动作参考图已失效|动作骨架文件/.test(e.message))poseReset();status(e.message,true);submitting=false;if(!jobList.length){busy=false;$('progress').style.display='none'}controls();showReferences()}};
+let missStreak=0;
+function clearStuckJob(msg){if(job){jobList=jobList.filter(x=>x!==job)}job=jobList[0]||null;missStreak=0;sessionStorage.setItem('studio-jobs',JSON.stringify(jobList));if(job)sessionStorage.setItem('studio-job',job);else sessionStorage.removeItem('studio-job');if(!job){busy=false;if(pollTimer){clearTimeout(pollTimer);pollTimer=null}$('progress').style.display='none'}status(msg||'旧任务已失效，可以重新生成。',true);controls();showReferences();refreshQueue()};if($('unstick'))$('unstick').onclick=()=>{clearStuckJob('已强制解除卡住，可以重新生成。');};
+async function poll(){try{const state=await api('/api/jobs/'+encodeURIComponent(job));const msg=state.message||'';if(/暂未查到任务位置|找不到该任务/.test(msg)){missStreak++;status(msg,state.state==='error');if(state.state==='error'||missStreak>=6){clearStuckJob(state.state==='error'?msg:'找不到该任务了（可能模型刚重启）。已清除卡住的旧任务，请重新点生成。');return}}else{missStreak=0;paintJob(state)}if(['done','error','cancelled'].includes(state.state)){missStreak=0;if(state.state==='done')showResults(state.images);jobList=jobList.filter(x=>x!==job);job=jobList[0]||null;sessionStorage.setItem('studio-jobs',JSON.stringify(jobList));if(job){sessionStorage.setItem('studio-job',job);status('上一张已完成，继续下一个排队任务…');controls();refreshQueue();pollTimer=setTimeout(poll,400);return}sessionStorage.removeItem('studio-job');busy=false;$('progress').style.display='none';controls();showReferences();refreshQueue();pollTimer=null;return}}catch(e){if(e.status===403||e.status===404){clearStuckJob('当前任务记录已失效（服务可能刚重启）。已有图片仍在本地输出目录，请重新生成。');return}status(e.message+' 正在重试…',true)}pollTimer=setTimeout(poll,700)}
+
+function downloadLinkButton(url){const b=document.createElement('button');b.type='button';b.textContent='复制下载链接';b.style.cssText='font-size:12px;padding:4px 8px';b.onclick=async e=>{e.preventDefault();e.stopPropagation();b.disabled=true;try{const d=await api('/api/download-links',json({url}));if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(d.url)}else{const t=document.createElement('textarea');t.value=d.url;t.style.cssText='position:fixed;top:0;left:0';document.body.append(t);t.select();const ok=document.execCommand('copy');t.remove();if(!ok)throw new Error('浏览器未允许复制，请重试')}b.textContent='已复制，可粘贴到迅雷';b.title='链接有效期24小时';setTimeout(()=>b.textContent='复制下载链接',4000)}catch(er){studioToast(er.message||'复制失败，请重试')}finally{b.disabled=false}};return b}
+function showResults(images){$('empty').hidden=true;$('results').replaceChildren();$('resultActions').replaceChildren();images.forEach((url,index)=>{const image=document.createElement('img');StudioThumbHD.add(image,url);image.alt='本次生成的图片';image.style.cursor='zoom-in';const gal=images.map(u=>({url:u,thumb:u}));image.onclick=e=>{e.preventDefault();openLB(url,image.src,gal)};$('results').append(image);const link=document.createElement('a');link.href=url+'?download=1';link.textContent=images.length>1?'下载原图 '+(index+1):'下载原图';link.style.marginRight='14px';const copyLink=downloadLinkButton(url);const del=document.createElement('a');del.href='#';del.textContent=images.length>1?'删除这张 '+(index+1):'删除这张';del.style.cssText='margin-right:14px;color:#efa79b';del.onclick=async e=>{e.preventDefault();if(!(await studioConfirm('将删除这张生成的图片（单张历史里也会一起删掉）。删除后无法恢复，确定吗？')))return;try{await api(url,{method:'DELETE'});image.remove();link.remove();copyLink.remove();del.remove();if(!$('results').children.length)$('empty').hidden=false;if($('hiPanel').open)hiLoad().catch(()=>{})}catch(er){alert(er.message)}};$('resultActions').append(link,copyLink,del)})}
+$('cancel').onclick=async()=>{if(!job)return;$('cancel').disabled=true;try{await api('/api/jobs/'+encodeURIComponent(job)+'/cancel',json({}));status('正在取消本次生成…')}catch(e){status(e.message,true)}finally{$('cancel').disabled=false}};
+try{jobList=JSON.parse(sessionStorage.getItem('studio-jobs')||'[]');if(!Array.isArray(jobList))jobList=[]}catch(e){jobList=[]}job=sessionStorage.getItem('studio-job')||jobList[0]||null;if(job&&jobList.indexOf(job)<0)jobList.unshift(job);if(job){(async()=>{try{const st=await api('/api/jobs/'+encodeURIComponent(job));if(st.state==='error'||/找不到该任务|暂未查到/.test(st.message||'')){clearStuckJob(st.message||'旧任务已失效');return}if(['done','error','cancelled'].includes(st.state)){jobList=jobList.filter(x=>x!==job);job=jobList[0]||null;sessionStorage.setItem('studio-jobs',JSON.stringify(jobList));if(job){sessionStorage.setItem('studio-job',job);busy=true;$('progress').style.display='block';status('恢复排队中的下一任务…');poll();return}sessionStorage.removeItem('studio-job');if(st.state==='done'&&st.images&&st.images.length)showResults(st.images);status(st.message||'上次任务已结束');return}busy=true;$('progress').style.display='block';status(st.message||'正在恢复本次生成状态…');poll()}catch(e){clearStuckJob('旧任务已失效（'+(e.status||'')+'），已自动清除。请重新生成。')}})()}else{busy=false;controls()}check();setInterval(check,15000);refreshQueue();if(queueTimer)clearInterval(queueTimer);queueTimer=setInterval(refreshQueue,5000);
+
+let pkSel=new Set();const pkFmt=s=>s==null?'估算中':s>=3600?Math.floor(s/3600)+'小时'+Math.round(s%3600/60)+'分':s>=60?Math.round(s/60)+'分钟':s+'秒';
+async function pkLoad(){const d=await api('/api/inputs');$('pkInputs').replaceChildren();if(!imgShow.pk){$('pkInputs').textContent=d.files.length?'图片已收起（共 '+d.files.length+' 张），点「展开图片」查看；勾选不受影响':'inputs 文件夹里还没有照片';return}d.files.forEach(n=>{const u='/api/inputs/'+encodeURIComponent(n);const b=document.createElement('div');b.className='ref';b.style.cssText='width:66px;display:flex;flex-direction:column;gap:2px;position:relative';const i=document.createElement('img');i.loading='lazy';StudioThumbHD.add(i,u+'?thumb=1',u);i.alt='参考照片';i.title='点图片放大预览';i.style.cssText='width:66px;height:76px;object-fit:cover;border-radius:6px;display:block;cursor:zoom-in';i.style.outline=pkSel.has(n)?'3px solid #9dccad':'none';i.onclick=e=>{e.preventDefault();e.stopPropagation();openLB(u)};const row=document.createElement('label');row.style.cssText='display:flex;align-items:center;gap:4px;min-height:40px;padding:2px 0;cursor:pointer;user-select:none;-webkit-user-select:none';row.title='勾选后用于生成或删除';const ck=document.createElement('input');ck.type='checkbox';ck.checked=pkSel.has(n);ck.style.cssText='width:22px;height:22px;margin:0;flex:0 0 22px;accent-color:#9dccad';ck.onclick=e=>e.stopPropagation();const tip=document.createElement('span');tip.textContent='勾选';tip.style.cssText='font-size:12px;color:#c5d4cb';const sync=()=>{ck.checked?pkSel.add(n):pkSel.delete(n);i.style.outline=pkSel.has(n)?'3px solid #9dccad':'none';$('pkSel').textContent=pkSel.size?'已选 '+pkSel.size+' 张':'未选择'};ck.onchange=sync;row.append(ck,tip);row.onclick=e=>e.stopPropagation();b.append(i,row);$('pkInputs').append(b)});if(!d.files.length)$('pkInputs').textContent='inputs 文件夹里还没有照片'}
+let pkEdited={};async function pkEditor(){const m=$('pkEditMode').value,k=$('pkKind').value,key=k+m;if(!pkEdited[key])pkEdited[key]=(await api('/api/recipes?mode='+m+'&kind='+k)).items.map(r=>({label:r.label,prompt:''}));$('pkEdit').replaceChildren();pkEdited[key].forEach((r,i)=>{const l=document.createElement('small');l.textContent=(i+1)+'. '+r.label;const t=document.createElement('textarea');t.value=r.prompt;t.style.minHeight='60px';t.style.marginBottom='8px';t.oninput=()=>{r.prompt=t.value};$('pkEdit').append(l,t)})}
+$('pkCustom').onchange=()=>{$('pkEdit').hidden=!$('pkCustom').checked;if($('pkCustom').checked)pkEditor()};$('pkEditMode').onchange=$('pkKind').onchange=()=>{if($('pkCustom').checked)pkEditor()};
+async function pkStart(mode){if(!pkSel.size){$('pkStatus').textContent='请先点选参考照片';return}if(pkSel.size>10){$('pkStatus').textContent='生成时最多选 10 张，请减少勾选';return}const custom=$('pkCustom').checked;const kind=$('pkKind').value,key=kind+mode;const body={mode,kind,files:[...pkSel],size:Number($('pkSize').value),custom};if(custom){if(!pkEdited[key])pkEdited[key]=(await api('/api/recipes?mode='+mode+'&kind='+kind)).items.map(r=>({label:r.label,prompt:''}));body.prompts=pkEdited[key].map(r=>r.prompt);if(!body.prompts.some(p=>p.trim())){$('pkStatus').textContent='自定义提示词已打开，请至少填写一条';return}}try{await api('/api/pack',json(body));pkPoll()}catch(e){$('pkStatus').textContent=e.message}}
+$('pkStd').onclick=()=>pkStart('standard');if($('pkAdv'))$('pkAdv').onclick=()=>pkStart('advanced');$('pkRefresh').onclick=pkLoad;
+$('pkStop').onclick=async()=>{await api('/api/pack/stop',json({}));$('pkStatus').textContent='正在停止…'};
+async function pkResume(){if(!pkSel.size){$('pkStatus').textContent='请先勾选本批要用的全部参考照片（你勾了几张就选几张）';return}if(pkSel.size>10){$('pkStatus').textContent='最多选 10 张';return}const batch=$('pkView').dataset.batch||(await api('/api/batches')).batches[0]?.batch;if(!batch){$('pkStatus').textContent='没有可继续的批次';return}try{$('pkStatus').textContent='正在从批次 '+batch+' 继续（全部 '+pkSel.size+' 张参考）…';const r=await api('/api/pack/resume',json({batch,files:[...pkSel]}));$('pkStatus').textContent='已继续：批次 '+r.batch+' · 从第 '+(r.done+1)+' 张起 · 参考 '+(r.selected)+' 张（含画布共 '+r.refs+'）';pkPoll()}catch(e){$('pkStatus').textContent=e.message}}
+$('pkResume').onclick=()=>pkResume();
+
+let pkTimer=null;async function pkPoll(){clearTimeout(pkTimer);const s=await api('/api/pack');const run=s.state==='running';$('pkStop').hidden=!run;if(run)$('pkResume').hidden=true;$('pkStd').disabled=$('pkAdv').disabled=$('pkResume').disabled=run;$('pkProg').style.display=run?'block':'none';
+if(run){$('pkProg').max=s.total;$('pkProg').value=s.done;$('pkStatus').textContent='正在生成第 '+(s.done+1)+' / '+s.total+' 张：'+s.label+'\n已完成 '+s.done+' 张 · 预计剩余 '+pkFmt(s.eta_s)+(s.qa?'\n上一张 '+(s.qa.score==null?'未打分':s.qa.score+' 分')+(s.qa.flags&&s.qa.flags.length?'（'+s.qa.flags.map(x=>FLAG[x]||x).join('、')+'）':''):'')+(s.retried?' · 已自动重试 '+s.retried+' 次':'');pkShow(s.batch).catch(()=>{});pkTimer=setTimeout(pkPoll,3000)}
+else if(s.state!=='idle'){$('pkResume').hidden=!(s.state==='stopped'||s.state==='error')||!(s.done<s.total);$('pkStatus').textContent={done:'已完成 ',stopped:'已停止，已完成 ',error:'出错：'+(s.error||'')+'\n已完成 '}[s.state]+s.done+' / '+s.total+' 张，批次 '+s.batch+(s.state!=='done'&&s.done<s.total?'\n勾选全部参考照片后点「继续本批」':'');pkBatches();pkShow(s.batch).catch(()=>{})}else{pkOfferResume().catch(()=>{$('pkResume').hidden=true})}}
+async function pkBatches(){const d=await api('/api/batches');$('pkBatches').replaceChildren();d.batches.forEach(b=>{const r=document.createElement('div');r.style.margin='4px 0';const v=document.createElement('a');v.href='#';v.textContent=b.batch+' · '+({character:'角色',item:'物品'}[b.kind]||'')+({standard:'标准',advanced:'高级'}[b.mode]||'')+' · '+b.count+' 张';v.onclick=e=>{e.preventDefault();pkShow(b.batch,true)};const z=document.createElement('a');z.href='/api/batches/'+b.batch+'/zip';z.textContent='  打包下载 zip';z.style.marginLeft='12px';const del=document.createElement('a');del.href='#';del.textContent='  删除批次';del.style.cssText='margin-left:12px;color:#efa79b';del.onclick=e=>{e.preventDefault();pkDelBatch(b.batch)};r.append(v,z,del);$('pkBatches').append(r)})}
+pkLoad().catch(()=>{});pkPoll().catch(()=>{});pkBatches().catch(()=>{});
+
+$('pkUpBtn').onclick=()=>$('pkUpFiles').click();
+$('libUpBtn').onclick=()=>$('pkUpFiles').click();
+
+$('pkUpFiles').onchange=async()=>{const fs=[...$('pkUpFiles').files];$('pkUpFiles').value='';if(!fs.length)return;$('pkUpBtn').disabled=true;if($('libUpBtn'))$('libUpBtn').disabled=true;let ok=0,bad=[];const tip=(t)=>{if($('pkUpMsg'))$('pkUpMsg').textContent=t;if($('libUpMsg'))$('libUpMsg').textContent=t};for(let i=0;i<fs.length;i++){const f=fs[i];tip('正在上传到素材库 '+(i+1)+' / '+fs.length);if(!/\.(jpe?g|png|webp)$/i.test(f.name)){bad.push('格式不支持');continue}if(f.size>25*1024*1024){bad.push('超过25MB');continue}try{const form=new FormData();form.append('image',f,f.name);await api('/api/inputs/upload',{method:'POST',body:form});ok++}catch(e){bad.push(e.message||'失败')}}tip('上传到素材库完成：成功 '+ok+' 张'+(bad.length?'，失败 '+bad.length+' 张':'') );$('pkUpBtn').disabled=false;if($('libUpBtn'))$('libUpBtn').disabled=false;pkLoad().catch(()=>{});if($('libPanel')&&!$('libPanel').hidden){try{libIndex()}catch(e){} try{libLoad()}catch(e){}}};
+
+let pkShown=null,pkShownCount=-1,qaScores={},qaRej=[],pkViewSel=new Set();
+const FLAG={blurry:'模糊',face_missing:'没拍到脸',multiple_faces:'多张脸',age_drift:'年龄变了',near_duplicate:'和前面重复',unreadable:'读不出'};
+async function pkShow(batch,force){const f=await api('/api/batches/'+batch);let sc={scores:{},rejected:[]};try{sc=await api('/api/batches/'+batch+'/scores')}catch{}const key=f.files.length+'|'+Object.keys(sc.scores).length+'|'+sc.rejected.length+'|'+$('qaSort').value+'|'+$('qaShowRej').checked;if(!force&&batch===pkShown&&key===pkShownCount)return;if(batch!==pkShown)pkViewSel.clear();pkShown=batch;pkShownCount=key;qaScores=sc.scores;qaRej=sc.rejected;
+let items=f.files.map(n=>({n,rej:false})).concat($('qaShowRej').checked?qaRej.map(n=>({n,rej:true})):[]);const S=x=>(qaScores[x.n]||{}).score;if($('qaSort').value==='score')items.sort((a,b)=>(S(b)??-1)-(S(a)??-1));
+$('pkViewTitle').replaceChildren();const title=document.createElement('span');title.textContent='批次 '+batch+' · 保留 '+f.files.length+' 张'+(qaRej.length?' · 淘汰 '+qaRej.length+' 张':'')+'（点图放大，点勾选框选中）';title.className='muted';const selInfo=document.createElement('small');selInfo.id='pkViewSelInfo';selInfo.style.marginLeft='10px';selInfo.textContent=pkViewSel.size?'已选 '+pkViewSel.size+' 张':'未选择';const allBtn=document.createElement('button');allBtn.textContent='全选本批/取消';allBtn.style.marginLeft='10px';allBtn.onclick=()=>{const names=items.map(x=>x.n);const all=names.length&&names.every(n=>pkViewSel.has(n));if(all)pkViewSel.clear();else names.forEach(n=>pkViewSel.add(n));pkShow(batch,true)};const delBtn=document.createElement('button');delBtn.textContent='删除所选成品';delBtn.style.cssText='margin-left:8px;color:#efa79b';delBtn.onclick=async()=>{if(!pkViewSel.size){selInfo.textContent='请先勾选要删除的成品';return}if(!(await pkConfirm('将删除 '+pkViewSel.size+' 张成品')))return;const names=[...pkViewSel];for(const n of names){try{await api('/api/batches/'+batch+'/files/'+encodeURIComponent(n),{method:'DELETE'});pkViewSel.delete(n)}catch(e){alert(e.message);break}}pkBatches();pkShow(batch,true)};$('pkViewTitle').append(title,selInfo,allBtn,delBtn);$('pkView').replaceChildren();$('pkView').dataset.batch=batch;
+const pkGal=items.map(({n,rej})=>({url:rej?'/api/batches/'+batch+'/rejected/'+encodeURIComponent(n):'/api/batches/'+batch+'/files/'+encodeURIComponent(n),thumb:(rej?'/api/batches/'+batch+'/rejected/'+encodeURIComponent(n):'/api/batches/'+batch+'/files/'+encodeURIComponent(n))+'?thumb=1'}));items.forEach(({n,rej})=>{const u=rej?'/api/batches/'+batch+'/rejected/'+encodeURIComponent(n):'/api/batches/'+batch+'/files/'+encodeURIComponent(n);const q=qaScores[n]||{};const box=document.createElement('div');box.dataset.n=n;box.style.cssText='width:130px;display:flex;flex-direction:column;gap:4px;position:relative'+(rej?';opacity:.55':'');const wrap=document.createElement('div');wrap.style.cssText='position:relative;width:130px;height:160px';const i=document.createElement('img');i.loading='lazy';StudioThumbHD.add(i,u+'?thumb=1',u);i.alt='成品';i.title='点图片放大预览';i.style.cssText='width:130px;height:160px;object-fit:cover;border-radius:6px;display:block;cursor:zoom-in';i.onclick=e=>{e.preventDefault();e.stopPropagation();openLB(u,i.src,pkGal)};const badge=document.createElement('div');badge.style.cssText='position:absolute;left:4px;top:4px;background:rgba(0,0,0,.7);border-radius:6px;padding:0 6px;font-size:12px;pointer-events:none';badge.textContent=q.score==null?'未打分':(q.score.toFixed(0)+'分'+(q.method==='face'?'·脸':q.method==='clip'?'·整体':''));wrap.append(i,badge);
+const fl=document.createElement('small');fl.style.cssText='display:block;font-size:11px;color:#efa79b';fl.textContent=(q.flags||[]).map(x=>FLAG[x]||x).join('、');
+const row=document.createElement('label');row.style.cssText='display:flex;align-items:center;gap:8px;min-height:40px;padding:2px 0;cursor:pointer;user-select:none;-webkit-user-select:none';row.title='勾选后可批量删除';const ck=document.createElement('input');ck.type='checkbox';ck.checked=pkViewSel.has(n);ck.style.cssText='width:22px;height:22px;margin:0;flex:0 0 22px;accent-color:#9dccad';ck.onclick=e=>e.stopPropagation();ck.onchange=()=>{ck.checked?pkViewSel.add(n):pkViewSel.delete(n);const info=$('pkViewSelInfo');if(info)info.textContent=pkViewSel.size?'已选 '+pkViewSel.size+' 张':'未选择'};const tip=document.createElement('span');tip.textContent='勾选';tip.style.cssText='font-size:13px;color:#c5d4cb';row.append(ck,tip);row.onclick=e=>e.stopPropagation();
+const acts=document.createElement('div');acts.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap';const d=document.createElement('a');d.href=u+'?download=1';d.textContent='下载';d.style.fontSize='12px';acts.append(d,downloadLinkButton(u));
+if(rej){const r=document.createElement('a');r.href='#';r.textContent='恢复';r.style.fontSize='12px';r.onclick=async e=>{e.preventDefault();e.stopPropagation();try{await api('/api/batches/'+batch+'/restore',json({names:[n]}));pkShow(batch,true);qaLoadStats()}catch(er){alert(er.message)}};acts.append(r)}
+else{const x=document.createElement('a');x.href='#';x.textContent='删除';x.style.cssText='font-size:12px;color:#efa79b';x.onclick=e=>{e.preventDefault();e.stopPropagation();pkDelFile(batch,n,box)};acts.append(x)}
+const t2=document.createElement('small');t2.textContent=n.replace(/_\d+_\.png$/,'');t2.style.fontSize='11px';box.append(wrap,row,acts,fl,t2);$('pkView').append(box)})}
+async function qaLoadCfg(){const c=await api('/api/qa/config');$('qaThr').value=c.threshold;$('qaThrV').textContent=c.threshold;$('qaRetries').value=String(c.retries)}
+let qaT;$('qaThr').oninput=()=>{$('qaThrV').textContent=$('qaThr').value;clearTimeout(qaT);qaT=setTimeout(()=>api('/api/qa/config',json({threshold:Number($('qaThr').value)})).then(qaLoadStats).catch(()=>{}),400)};
+$('qaRetries').onchange=()=>api('/api/qa/config',json({retries:Number($('qaRetries').value)})).catch(()=>{});
+$('qaSort').onchange=$('qaShowRej').onchange=()=>{if(pkShown)pkShow(pkShown,true)};
+$('qaApply').onclick=async()=>{if(!pkShown){$('qaMsg').textContent='先点开一个批次';return}try{const d=await api('/api/batches/'+pkShown+'/threshold',json({threshold:Number($('qaThr').value)}));$('qaMsg').textContent='低于分数线移到淘汰 '+d.rejected+' 张，恢复 '+d.restored+' 张（不会删除）';pkShow(pkShown,true);pkBatches();qaLoadStats()}catch(e){$('qaMsg').textContent=e.message}};
+async function qaLoadStats(){try{const s=await api('/api/qa/stats');const b=$('qaBanner');if(s.high>=s.train_target){b.hidden=false;b.textContent='高分图已够 '+s.high+' 张（≥'+s.threshold+' 分），可以训练角色小模型了（需要你确认后才会开始）'}else{b.hidden=false;b.textContent='高分图 '+s.high+' / '+s.train_target+' 张，够了就可以训练角色小模型'}
+const fl=Object.entries(s.flags).sort((a,b)=>b[1]-a[1]).map(([k,v])=>(FLAG[k]||k)+' '+v+' 次').join('，');$('qaStats').textContent='共记录 '+s.runs+' 次出图，通过 '+s.accepted+' 次\n常见问题：'+(fl||'暂无')+'\n\n最常不过关的镜头：\n'+(s.shots.filter(x=>x.fails).slice(0,15).map(x=>x.label+'（'+({character:'角色',item:'物品'}[x.kind]||'')+'）：'+x.fails+'/'+x.runs+' 次不过关，平均 '+x.avg+' 分').join('\n')||'暂无')}catch{}}
+qaLoadCfg().catch(()=>{});qaLoadStats();setInterval(qaLoadStats,30000);
+
+
+const vlSelected=new Set();
+async function dreamRefresh(){try{renderSwapJobs('dreamMsg',(await api('/api/dreamid/jobs')).jobs)}catch(e){$('dreamMsg').textContent=e.message}}
+$('dreamRefresh').onclick=dreamRefresh;
+
+function renderSwapJobs(id,jobs){
+ const box=$(id);box.replaceChildren();
+ if(!jobs.length){box.textContent='还没有排队任务。无卡只排队，带卡后自动执行。';return}
+ const states={queued:'已排队',waiting_gpu:'等待带卡开机',staging:'传送素材',running:'执行中',collecting:'回传结果',done:'完成',failed:'失败'};
+ jobs.forEach(j=>{const row=document.createElement('div');row.style.marginBottom='8px';
+ const names={facefusion:'FaceFusion',deepfacelab:'DeepFaceLab',dreamidv:'DreamID-V'};
+ row.textContent=(names[j.engine]||'DreamID-V')+' · '+(states[j.state]||j.state)+' · 第 '+((j.step||0)+1)+' / '+(j.steps?.length||6)+' 步'+(j.progress!=null?' · '+Math.round(j.progress)+'%':'')+'：'+j.message;
+ (j.results||[]).forEach((url,i)=>{const a=document.createElement('a');a.href=url+'?download=1';a.textContent=' 下载结果 '+(i+1);a.style.marginLeft='10px';row.append(a)});box.append(row)});
+}
+for(const [prefix,id] of [['faceswap','fsMsg'],['dreamid','dreamMsg']]){
+ const stream=new EventSource('/api/'+prefix+'/events');
+ stream.onmessage=e=>{try{renderSwapJobs(id,JSON.parse(e.data).jobs)}catch{}};
+}
+
+// faceswap-suite integration
+$('ffUpload').onclick=()=> $('choose').click();
+$('ffLibrary').onclick=()=>{document.getElementById('tab-material')?.click();$('libOpen').click()};
+async function faceswapSubmit(engine,action,button){
+ const msg=$('fsMsg');
+ if(!vlSelected.size){msg.textContent='请先在视频库勾选视频';return}
+ if(engine==='facefusion'&&!references.length){msg.textContent='请添加或勾选人脸参考照片';return}
+ if(engine==='deepfacelab'&&(!$('dflModel').value.trim()||(action==='train'&&(!$('dflPack').value.trim()||!$('dflConfirm').checked)))){msg.textContent='请填写模型编号；训练还需填写素材包路径并勾选训练确认';return}
+ button.disabled=true;
+ try{
+ const faces=[];
+ if(engine==='facefusion')for(const r of references){if(r.lib){faces.push({lib:r.lib});continue}if(r.file&&!r.id){const f=new FormData();f.append('image',r.file,r.file.name);const d=await api('/api/inputs/upload',{method:'POST',body:f});r.lib=d.name;faces.push({lib:d.name});continue}if(!r.id)throw Error('请重新上传人脸照片');faces.push({id:r.id})}
+ msg.textContent='正在校验所选路径并探测安装机环境…';
+ const d=await api('/api/faceswap/jobs',json({engine,action,videos:[...vlSelected],faces,material_pack:$('dflPack').value.trim(),model:$('dflModel').value.trim(),confirm_train:$('dflConfirm').checked,model_class:$('dflClass').value,training_iterations:Number($('dflIterations').value)}));
+ msg.textContent=d.message+' 队列状态：'+d.state+(!d.environment.ready?' 环境尚未就绪，请查看安装报告。':'');
+ }catch(e){msg.textContent=e.message}finally{button.disabled=false}
+}
+$('ffStart').onclick=()=>faceswapSubmit('facefusion','swap',$('ffStart'));
+$('dflTrain').onclick=()=>faceswapSubmit('deepfacelab','train',$('dflTrain'));
+$('dflSwap').onclick=()=>faceswapSubmit('deepfacelab','swap',$('dflSwap'));
+$('fsRefresh').onclick=async()=>{try{renderSwapJobs('fsMsg',(await api('/api/faceswap/jobs')).jobs)}catch(e){$('fsMsg').textContent=e.message}};
+
+$('dreamUpload').onclick=()=> $('choose').click();
+$('dreamLibrary').onclick=()=>{document.getElementById('tab-material')?.click();$('libOpen').click()};
+$('dreamStart').onclick=async()=>{const b=$('dreamStart');if(!vlSelected.size||!references.length){$('dreamMsg').textContent='请先勾选视频，再添加或勾选人脸参考照片';return}b.disabled=true;try{$('dreamMsg').textContent='第 1 步：收集所选视频和照片…';const faces=[];for(const r of references){if(r.lib){faces.push({lib:r.lib});continue}if(r.file&&!r.id){const f=new FormData();f.append('image',r.file,r.file.name);const d=await api('/api/inputs/upload',{method:'POST',body:f});r.lib=d.name;faces.push({lib:d.name});continue}if(!r.id)throw Error('请从素材库勾选人脸照片，或重新上传照片');faces.push({id:r.id})}$('dreamMsg').textContent='第 2 步：校验路径和检查环境…';const d=await api('/api/dreamid/jobs',json({videos:[...vlSelected],faces}));$('dreamMsg').textContent='第 3 步：已保存排队任务（'+d.video_count+' 个视频）。'+d.message+(d.environment.stale?' 环境记录较早，带卡前需要重新检查。':'')}catch(e){$('dreamMsg').textContent=e.message}finally{b.disabled=false}};
+
+async function vlLoad(){
+if(!$('videoLibrary').open)return;
+const d=await api('/api/videos'),rows=$('vlRows');
+if(!$('videoLibrary').open)return;
+const names=new Set(d.videos.map(v=>v.name));for(const n of vlSelected)if(!names.has(n))vlSelected.delete(n);
+const signature=JSON.stringify(d.videos.map(v=>({n:v.name,m:v.mb,d:v.duration||0,p:!!v.playable})));
+const anyPlaying=[...rows.querySelectorAll('video')].some(v=>!v.paused&&!v.ended);
+const anyOpen=!!rows.querySelector('.vl-player.open');
+if(rows.dataset.signature===signature||anyPlaying||anyOpen){rows.querySelectorAll('input[data-name]').forEach(ck=>ck.checked=vlSelected.has(ck.dataset.name));return}
+const keepOpen=rows.querySelector('.vl-player.open video');
+const keepName=keepOpen&&keepOpen.dataset.name; const keepTime=keepOpen?keepOpen.currentTime:0; const wasPlaying=keepOpen&&!keepOpen.paused;
+rows.dataset.signature=signature;rows.replaceChildren();
+function stopOthers(except){rows.querySelectorAll('video').forEach(v=>{if(v!==except){try{v.pause()}catch{}}}); rows.querySelectorAll('.vl-cover.playing').forEach(c=>{if(!except||c.dataset.name!==except.dataset.name)c.classList.remove('playing')}); rows.querySelectorAll('.vl-player.open').forEach(p=>{if(!except||!p.contains(except))p.classList.remove('open')})}
+for(const v of d.videos){
+const item=document.createElement('div'),row=document.createElement('div'),ck=document.createElement('input'),box=document.createElement('button'),img=document.createElement('img'),info=document.createElement('span'),title=document.createElement('span'),size=document.createElement('small'),retry=document.createElement('button'),player=document.createElement('div'),vid=document.createElement('video'),closeBtn=document.createElement('button');
+item.className='vl-video-item';row.className='vl-video-row';ck.type='checkbox';ck.dataset.name=v.name;ck.checked=vlSelected.has(v.name);
+const applySel=()=>{ck.checked?vlSelected.add(v.name):vlSelected.delete(v.name);$('vlMsg').textContent='已勾选 '+vlSelected.size+' 个视频';if(vlSelected.size===1){const name=[...vlSelected][0]; vdLoad().then(()=>{const s=$('vdList'); if(s){s.value=name; $('vlMsg').textContent='已勾选，可直接抽帧或训练';}}).catch(()=>{});} };
+ck.onchange=applySel; ck.onclick=e=>e.stopPropagation();
+const meta=(v.duration_text?v.duration_text+' · ':'')+v.mb+' MB';
+const fileUrl=v.url||('/api/videos/'+encodeURIComponent(v.name)+'/file');
+function showFail(){box.classList.add('fail'); box.replaceChildren(); const a=document.createElement('span'); a.textContent='封面暂不可用'; const b=document.createElement('small'); b.textContent=meta||v.name; box.append(a,b); retry.type='button'; retry.className='vl-retry'; retry.textContent='重试封面'; retry.onclick=async e=>{e.preventDefault();e.stopPropagation(); retry.disabled=true; try{const r=await api('/api/videos/'+encodeURIComponent(v.name)+'/cover/retry',json({})); delete rows.dataset.signature; box.classList.remove('fail'); box.textContent='封面加载中'; img.src=(r.cover||v.cover)+'&_='+Date.now(); box.append(img);}catch(err){$('vlMsg').textContent=err.message||'重试失败'; showFail();} finally{retry.disabled=false;}}; box.append(retry); delete rows.dataset.signature; box.title='封面生成失败，仍可勾选使用视频';}
+box.type='button';box.className='vl-cover';box.dataset.name=v.name;box.title='点击播放';box.setAttribute('aria-label','播放 '+v.name);box.textContent='封面加载中';img.alt='视频封面';img.loading='lazy';img.decoding='async';
+img.onload=()=>{box.classList.remove('fail'); box.replaceChildren(img)}; img.onerror=showFail;
+if(v.cover){img.src=v.cover;box.append(img)}else showFail();
+async function startPlay(){stopOthers(vid); player.classList.add('open'); box.classList.add('playing'); vid.controls=true; vid.setAttribute('playsinline',''); vid.setAttribute('webkit-playsinline',''); const mb=Number(v.mb)||0; const playable=v.playable!==false; if(v.playable===false||(!v.duration&&mb>200)){$('vlMsg').textContent='这个视频还没下完或文件不完整，暂时无法播放'; box.classList.remove('playing'); return} try{ if(vid._blobUrl){try{URL.revokeObjectURL(vid._blobUrl)}catch{}; vid._blobUrl=null} // Prefer credentialed fetch→blob for mobile Safari cookie reliability on small files
+ if(mb>0&&mb<=80){ $('vlMsg').textContent='加载中…'; const r=await fetch(fileUrl,{credentials:'same-origin',headers:{'Accept':'video/*,*/*'}}); if(!r.ok){ throw Error(r.status===403?'请重新登录后再播放':('视频加载失败 HTTP '+r.status)); } const blob=await r.blob(); if(!blob.size) throw Error('视频为空'); const u=URL.createObjectURL(blob); vid._blobUrl=u; vid.src=u; } else { if(vid.src!==new URL(fileUrl,location.origin).href){vid.removeAttribute('src'); vid.src=fileUrl; vid.load()} } await new Promise((resolve,reject)=>{ const onOk=()=>{cleanup();resolve()}; const onErr=()=>{cleanup();reject(Error('视频无法解码（可能未下完或不支持）'))}; const cleanup=()=>{vid.removeEventListener('loadeddata',onOk);vid.removeEventListener('error',onErr)}; if(vid.readyState>=2){resolve();return} vid.addEventListener('loadeddata',onOk); vid.addEventListener('error',onErr); setTimeout(()=>{cleanup();resolve()},8000); }); try{vid.muted=false; await vid.play(); $('vlMsg').textContent='播放中';}catch{try{vid.muted=true; await vid.play(); $('vlMsg').textContent='已开始播放（手机需静音才能自动播，可点喇叭开声）'}catch(err){throw err}} }catch(err){ box.classList.remove('playing'); $('vlMsg').textContent=err.message||'播放失败'; } }
+box.onclick=e=>{e.preventDefault();e.stopPropagation(); if(player.classList.contains('open')&&!vid.paused){vid.pause(); box.classList.remove('playing'); return} startPlay()};
+info.className='vl-video-info';title.textContent=v.name;size.textContent=meta+' · 点封面播放';info.append(title,size);
+player.className='vl-player';vid.preload='metadata';vid.controls=true;vid.dataset.name=v.name;vid.playsInline=true;
+closeBtn.type='button';closeBtn.className='vl-close';closeBtn.textContent='收起播放';closeBtn.onclick=e=>{e.preventDefault();e.stopPropagation(); try{vid.pause()}catch{}; if(vid._blobUrl){try{URL.revokeObjectURL(vid._blobUrl)}catch{}; vid._blobUrl=null; vid.removeAttribute('src')} player.classList.remove('open'); box.classList.remove('playing');};
+player.append(vid,closeBtn);
+row.append(ck,box,info);item.append(row,player);rows.append(item);
+if(keepName===v.name){player.classList.add('open');vid.src=fileUrl;vid.currentTime=keepTime||0; if(wasPlaying){box.classList.add('playing'); vid.play().catch(()=>{})}}
+}if(!d.videos.length)rows.textContent='还没有视频'
+}
+$('videoLibrary').ontoggle=()=>{if($('videoLibrary').open)vlLoad().catch(e=>$('vlMsg').textContent=e.message);else {$('vlRows').replaceChildren();delete $('vlRows').dataset.signature}};
+$('vlRefresh').onclick=()=>vlLoad().catch(e=>$('vlMsg').textContent=e.message);
+$('vlUse').onclick=async()=>{if(vlSelected.size!==1){$('vlMsg').textContent='同步时请只勾选一个视频';return}await vdLoad();$('vdList').value=[...vlSelected][0];$('vlMsg').textContent='已同步到抽帧选择框';$('vdList').scrollIntoView({block:'center'})};
+$('vlDelete').onclick=async()=>{if(!vlSelected.size)return;if(!(await studioConfirm('删除勾选的 '+vlSelected.size+' 个原视频？删除后无法恢复。')))return;try{await api('/api/videos/delete',json({names:[...vlSelected]}));vlSelected.clear();await vdLoad();await vlLoad();$('vlMsg').textContent='已删除勾选的视频';studioToast('已删除')}catch(e){$('vlMsg').textContent=e.message}};
+setInterval(()=>{if($('videoLibrary').open)vlLoad().catch(()=>{})},15000);
+
+async function vdLoad(){const d=await api('/api/videos');vlLoad().catch(()=>{});const s=$('vdList'),cur=s.value;s.replaceChildren();if(!d.videos.length){s.add(new Option('（先上传视频）',''))}d.videos.forEach(v=>s.add(new Option(v.name+' · '+v.mb+'MB',v.name)));if(cur)s.value=cur}
+$('vlUpBtn').onclick=()=>$('vdUpBtn').click();
+$('vdUpBtn').onclick=()=>$('vdFile').click();
+$('vdFile').onchange=()=>{const f=$('vdFile').files[0];$('vdFile').value='';if(f)vdChunkUpload(f)};
+const vdSleep=ms=>new Promise(r=>setTimeout(r,ms));let vdUploading=false;
+async function vdChunkUpload(f){if(!/\.(mp4|mov|mkv|webm|m4v)$/i.test(f.name)){$('vdUpMsg').textContent='只支持 mp4/mov/mkv/webm/m4v';return}if(vdUploading){$('vdUpMsg').textContent='已有视频在上传，等它传完';return}
+vdUploading=true;$('vdUpBtn').disabled=true;$('vlUpBtn').disabled=true;const P=$('vdUpProg'),M=$('vdUpMsg');P.style.display='block';P.max=f.size;P.value=0;const CH=8*1024*1024;
+try{const init=await api('/api/videos/chunk',json({name:f.name,size:f.size,lastModified:f.lastModified,live:$('vdLive').checked,person:$('vdPerson').checked}));
+if(init.live_msg)M.textContent=init.live_msg;if($('vdLive').checked&&!init.live_msg)vdPoll().catch(()=>{});
+let off=init.received||0;const t0=Date.now(),off0=off;if(off>0&&init.state!=='done')M.textContent='接着上次断点续传：已有 '+(off/1048576).toFixed(0)+' MB';
+while(init.state!=='done'&&off<f.size){const end=Math.min(f.size,off+CH);let tries=0;
+for(;;){try{const r=await fetch('/api/videos/chunk/'+init.id+'?offset='+off,{method:'PUT',body:f.slice(off,end),headers:{'X-Studio-Token':token,'Content-Type':'application/octet-stream'}});let d={};try{d=await r.json()}catch{}
+if(r.status===409&&Number.isFinite(d.received)){off=d.received;break}if(!r.ok)throw Error(d.error||('HTTP '+r.status));off=d.received;break}
+catch(e){tries++;if(tries>60)throw Error('网络一直断，已停在 '+(off/1048576).toFixed(0)+' MB。重新选同一个视频会从断点接着传');M.textContent='网络波动，第 '+tries+' 次重试本片…（'+e.message+'）';await vdSleep(Math.min(15000,1000*tries))}}
+P.value=off;const sec=(Date.now()-t0)/1000,sp=(off-off0)/1048576/Math.max(sec,0.1);const left=sp>0?(f.size-off)/1048576/sp:0;
+M.textContent='正在上传 '+f.name+'：'+Math.floor(off/f.size*100)+'%（'+(off/1048576).toFixed(0)+' / '+(f.size/1048576).toFixed(0)+' MB · '+sp.toFixed(1)+' MB/s · 约剩 '+pkFmt(Math.round(left))+'）'+($('vdLive').checked?'\n边传边抽进度见下方':'')}
+const d=await api('/api/videos/chunk/'+init.id+'/finish',json({}));M.textContent='上传完成：'+d.name+'（'+d.mb+' MB）'+($('vdLive').checked&&!init.live_msg?'，抽帧和分类在后台继续，结果自动进「人物碎片素材库」':'，可以点「抽帧」');
+await vdLoad();await vlLoad();$('vdList').value=d.name;vdPoll().catch(()=>{})}
+catch(e){M.textContent='上传暂停：'+e.message}finally{vdUploading=false;$('vdUpBtn').disabled=false;$('vlUpBtn').disabled=false;P.style.display='none'}}
+$('vdExtract').onclick=async()=>{let v=$('vdList').value; if(!v&&vlSelected.size===1){v=[...vlSelected][0]; $('vdList').value=v;} if(!v){$('vdMsg').textContent='请先勾选或选择一个视频';return}try{await api('/api/extract',json({video:v,person:$('vdPerson').checked}));vdPoll()}catch(e){$('vdMsg').textContent=e.message}};
+$('vdStop').onclick=()=>api('/api/extract/stop',json({}));window.addEventListener('beforeunload',e=>{if(vdUploading){e.preventDefault();e.returnValue=''}});
+let vdTimer=null;async function vdPoll(){clearTimeout(vdTimer);const s=await api('/api/extract');if(s.state==='idle')return;const run=s.state==='running';$('vdStop').hidden=!run;$('vdExtract').disabled=run;$('vdProg').style.display=run?'block':'none';if(run&&s.phase==='筛选中'){$('vdProg').max=s.extracted||1;$('vdProg').value=s.checked}else if(run&&s.phase==='智能分类中'){$('vdProg').max=s.tag_total||1;$('vdProg').value=s.tagged||0}else $('vdProg').removeAttribute('value');const drop=s.blur+s.dup+s.noperson;const t=(run?s.phase+'…\n':({done:'抽帧完成',stopped:'已停止',error:'出错：'+s.error}[s.state])+'\n')+'抽出 '+s.extracted+' 帧'+(s.total_est&&run&&s.phase==='抽帧中'?' / 约 '+s.total_est:'')+' · 已检查 '+s.checked+' · 保留 '+s.kept+' · 丢弃 '+drop+'（模糊 '+s.blur+'，重复 '+s.dup+(s.person_filter?'，无人 '+s.noperson:'')+'）'+(s.state==='done'?'\n保留的帧已放进 inputs/'+s.folder+'，在下面照片列表里勾选即可':'');$('vdMsg').textContent=(s.live===true?'【边传边抽】\n':'')+(s.live_reason?'【没法边传边抽】'+s.live_reason+'\n':'')+(s.live_note?s.live_note+'\n':'')+t+(s.tag_total?'\n智能分类 '+(s.tagged||0)+' / '+s.tag_total:'')+(s.tag_error?'\n分类出错：'+s.tag_error:'');if(run)vdTimer=setTimeout(vdPoll,1500);else{pkLoad().catch(()=>{});cvFolders().then(()=>{if(s.folder){$('cvSrc').value=s.folder;cvShow()}})}}
+vdLoad().catch(()=>{});vdPoll().catch(()=>{});
+
+const pkConfirm=async m=>studioConfirm(m+'\n\n删除后无法恢复，确定删除吗？');
+$('pkDel').onclick=async()=>{if(!pkSel.size){$('pkUpMsg').textContent='请先点选要删除的照片';return}if(!(await pkConfirm('将删除 '+pkSel.size+' 张参考照片')))return;try{const d=await api('/api/inputs/delete',json({files:[...pkSel]}));pkSel.clear();$('pkSel').textContent='未选择';$('pkUpMsg').textContent='已删除 '+d.deleted+' 张';pkLoad()}catch(e){$('pkUpMsg').textContent=e.message}};
+$('pkAll').onclick=async()=>{const d=await api('/api/inputs');if(pkSel.size)pkSel.clear();else d.files.slice(0,2000).forEach(n=>pkSel.add(n));$('pkSel').textContent=pkSel.size?'已选 '+pkSel.size+' 张':'未选择';pkLoad()};
+async function pkDelFile(b,n,box){if(!(await pkConfirm('将删除这张成品：'+n)))return;try{await api('/api/batches/'+b+'/files/'+encodeURIComponent(n),{method:'DELETE'});box.remove();pkShownCount--;pkBatches()}catch(e){alert(e.message)}}
+async function pkDelBatch(b){if(!(await pkConfirm('将删除整个批次 '+b+' 的所有成品')))return;try{await api('/api/batches/'+b,{method:'DELETE'});if(pkShown===b){$('pkView').replaceChildren();$('pkViewTitle').textContent='';pkShown=null}pkBatches()}catch(e){alert(e.message)}}
+
+let fx=null;async function fxLoad(){fx=await api('/api/rules');$('fxLockCP').value=fx.locks.character.value[0];$('fxLockCN').value=fx.locks.character.value[1];$('fxLockIP').value=fx.locks.item.value[0];$('fxLockIN').value=fx.locks.item.value[1];fxRender();$('fxMsg').textContent=fx.has_overrides?'当前使用你保存的修改':'当前为默认规则'}
+function fxRender(){const g=$('fxGroup').value;$('fxList').replaceChildren();fx.recipes[g].forEach((r,i)=>{const l=document.createElement('small');l.textContent=(i+1)+'. '+r.label+(r.prompt!==r.default?'（已修改）':'');const ta=document.createElement('textarea');ta.value=r.prompt;ta.style.minHeight='80px';ta.style.marginBottom='8px';ta.oninput=()=>{r.prompt=ta.value};$('fxList').append(l,ta)})}
+$('fxGroup').onchange=()=>fx&&fxRender();$('fxPanel').ontoggle=()=>{if($('fxPanel').open&&!fx)fxLoad().catch(e=>$('fxMsg').textContent=e.message)};
+$('fxSave').onclick=async()=>{if(!fx)return;const body={recipes:{},locks:{character:[$('fxLockCP').value,$('fxLockCN').value],item:[$('fxLockIP').value,$('fxLockIN').value]}};for(const k in fx.recipes)body.recipes[k]=fx.recipes[k].map(r=>r.prompt);try{const d=await api('/api/rules',json(body));$('fxMsg').textContent=d.saved?'已保存':'与默认相同，无需保存';await fxLoad()}catch(e){$('fxMsg').textContent=e.message}};
+$('fxReset').onclick=async()=>{if(!(await studioConfirm('将删除你对固定提示词的所有修改，恢复成默认规则。删除后无法恢复，确定吗？')))return;try{await api('/api/rules/reset',json({}));await fxLoad();$('fxMsg').textContent='已恢复默认'}catch(e){$('fxMsg').textContent=e.message}};
+
+let libSel=new Set(),libFiles=[],libShow=200;const libConfirm=async m=>studioConfirm(m+'\n\n删除后无法恢复，确定删除吗？');
+async function libIndex(){const d=await api('/api/lib');const f=$('libFolder'),to=$('libTo'),cur=f.value,ct=to.value;f.replaceChildren();to.replaceChildren();d.folders.forEach(x=>{f.add(new Option(x.label+'（'+x.count+'）',x.name));to.add(new Option(x.label,x.name))});if([...f.options].some(o=>o.value===cur))f.value=cur;if([...to.options].some(o=>o.value===ct))to.value=ct;$('libVids').textContent=d.videos.length?d.videos.map(v=>v.name+' · '+v.mb+'MB'+(v.duration_s!=null?' · '+Math.floor(v.duration_s/60)+'分'+(v.duration_s%60)+'秒':'')).join('\n'):'还没有视频';$('libVids').style.whiteSpace='pre-wrap';await libLoad()}
+async function libLoad(){const d=await api('/api/lib/files?folder='+encodeURIComponent($('libFolder').value)+'&q='+encodeURIComponent($('libQ').value));libFiles=d.files;libShow=200;libRender()}
+function libRender(){$('libGrid').replaceChildren();const libShown=libFiles.slice(0,libShow);const libGal=libShown.map(n=>({url:'/api/inputs/'+encodeURIComponent(n),thumb:'/api/inputs/'+encodeURIComponent(n)+'?thumb=1'}));libShown.forEach(n=>{const u='/api/inputs/'+encodeURIComponent(n);const b=document.createElement('div');b.className='ref';b.style.cssText='width:66px;display:flex;flex-direction:column;gap:2px;position:relative';const i=document.createElement('img');i.loading='lazy';StudioThumbHD.add(i,u+'?thumb=1',u);i.alt='素材库图片';i.title='点图片放大预览';i.style.cssText='width:66px;height:76px;object-fit:cover;border-radius:6px;display:block;cursor:zoom-in';i.style.outline=libSel.has(n)?'3px solid #9dccad':'none';i.onclick=e=>{e.preventDefault();e.stopPropagation();openLB(u,i.src,libGal)};const row=document.createElement('label');row.style.cssText='display:flex;align-items:center;gap:4px;min-height:40px;padding:2px 0;cursor:pointer;user-select:none;-webkit-user-select:none';row.title='勾选后可移动或删除';const ck=document.createElement('input');ck.type='checkbox';ck.checked=libSel.has(n);ck.style.cssText='width:22px;height:22px;margin:0;flex:0 0 22px;accent-color:#9dccad';ck.onclick=e=>e.stopPropagation();const tip=document.createElement('span');tip.textContent='勾选';tip.style.cssText='font-size:12px;color:#c5d4cb';const sync=()=>{if(ck.checked){if(!libAddRef(n)){ck.checked=false;return}libSel.add(n)}else{libSel.delete(n);libRemoveRef(n)}i.style.outline=libSel.has(n)?'3px solid #9dccad':'none';libCount()};ck.onchange=sync;row.append(ck,tip);row.onclick=e=>e.stopPropagation();b.append(i,row);$('libGrid').append(b)});$('libMore').replaceChildren();if(libFiles.length>libShow){const m=document.createElement('button');m.textContent='显示更多（共 '+libFiles.length+'）';m.onclick=()=>{libShow+=200;libRender()};$('libMore').append(m)}if(!libFiles.length)$('libGrid').textContent='这个文件夹没有图片'}
+$('libOpen').onclick=()=>{const p=$('libPanel');p.hidden=!p.hidden;$('libOpen').textContent=p.hidden?'从素材库选择':'收起素材库';if(!p.hidden)libIndex().catch(e=>$('libMsg').textContent=e.message)};$('libFolder').onchange=()=>libLoad();let libT;$('libQ').oninput=()=>{clearTimeout(libT);libT=setTimeout(libLoad,300)};
+$('libAll').onclick=()=>{if(libSel.size){[...libSel].forEach(n=>libRemoveRef(n));libSel.clear()}else{for(const n of libFiles){if(libSel.has(n))continue;if(!libAddRef(n))break;libSel.add(n)}}libCount();libRender()};
+$('libUse').onclick=async()=>{if(!libSel.size){$('libMsg').textContent='请先选择';return}pkSel=new Set([...libSel]);$('pkSel').textContent='已选 '+pkSel.size+' 张';await pkLoad();$('pkStd').scrollIntoView({behavior:'smooth'});$('libMsg').textContent='已放进素材包的参考选择'};
+function libCount(){$('libSel').textContent=libSel.size?'已选 '+libSel.size:'未选择'}function libAddRef(n){if(references.some(r=>r.lib===n))return true;/* allow select while generating */if(references.length>=10){$('libMsg').textContent='参考照片最多 10 张，已满，不能再勾选';return false}references.push({id:null,lib:n,file:null,url:'/api/inputs/'+encodeURIComponent(n)+'?thumb=1'});showReferences();$('libMsg').textContent='已加入参考照片（共 '+references.length+' 张）';return true}function libRemoveRef(n){const k=references.findIndex(r=>r.lib===n);if(k<0)return;references.splice(k,1);showReferences();$('libMsg').textContent='已移出参考照片（共 '+references.length+' 张）'}async function libFetchFile(n){const r=await fetch('/api/inputs/'+encodeURIComponent(n),{credentials:'same-origin'});const ct=(r.headers.get('Content-Type')||'').toLowerCase();const b=await r.blob();const ext=(n.split('.').pop()||'').toLowerCase();const looks=ct.startsWith('image/')||((ct.includes('octet-stream')||!ct)&&/^(png|jpe?g|webp|gif|bmp)$/.test(ext)&&b&&b.size>0);if(!r.ok||!looks)throw Error('素材库照片读取失败（HTTP '+r.status+'）');const typ=ct.startsWith('image/')?ct.split(';')[0]:('image/'+(ext==='jpg'?'jpeg':(ext||'jpeg')));return new File([b],n.split('/').pop(),{type:(b.type&&b.type.startsWith('image/'))?b.type:typ})}
+$('libMove').onclick=async()=>{if(!libSel.size)return;try{const d=await api('/api/lib/move',json({files:[...libSel],to:$('libTo').value}));libSel.clear();$('libSel').textContent='未选择';$('libMsg').textContent='已移动 '+d.moved+' 个';libIndex();pkLoad()}catch(e){$('libMsg').textContent=e.message}};
+$('libMk').onclick=async()=>{const n=prompt('新文件夹名');if(!n)return;try{await api('/api/lib/mkdir',json({name:n.trim()}));await libIndex();$('libMsg').textContent='已新建'}catch(e){$('libMsg').textContent=e.message}};
+$('libRen').onclick=async()=>{const o=$('libFolder').value;if(!o){$('libMsg').textContent='根目录不能改名';return}const n=prompt('新名字',o);if(!n||n===o)return;try{await api('/api/lib/rename',json({old:o,new:n.trim()}));$('libFolder').value=n.trim();await libIndex();pkLoad()}catch(e){$('libMsg').textContent=e.message}};
+$('libDel').onclick=async()=>{if(!libSel.size)return;if(!(await libConfirm('将删除 '+libSel.size+' 个文件')))return;try{const d=await api('/api/inputs/delete',json({files:[...libSel]}));libSel.clear();$('libSel').textContent='未选择';$('libMsg').textContent='已删除 '+d.deleted;libIndex();pkLoad()}catch(e){$('libMsg').textContent=e.message}};
+let hiPage=1,hiSel=new Set();function hiMark(){$('hiSel').textContent=hiSel.size?'已选 '+hiSel.size+' 张':'未选择'}async function hiLoad(){const d=await api('/api/history?page='+hiPage+'&per=48');const pages=Math.max(1,Math.ceil(d.total/d.per));$('hiInfo').textContent='第 '+d.page+' / '+pages+' 页 · 共 '+d.total+' 张';$('hiPrev').disabled=hiPage<=1;$('hiNext').disabled=hiPage>=pages;$('hiGrid').replaceChildren();const hiGal=d.files.map(n=>({url:'/api/history/file/'+encodeURIComponent(n),thumb:'/api/history/file/'+encodeURIComponent(n)+'?thumb=1'}));d.files.forEach(n=>{const u='/api/history/file/'+encodeURIComponent(n);const box=document.createElement('div');box.style.cssText='width:130px;display:flex;flex-direction:column;gap:4px';const i=document.createElement('img');i.loading='lazy';i.decoding='async';i.src=u+'?thumb=1';i.alt='历史图片';i.title='点图片放大预览';i.style.cssText='width:130px;height:160px;object-fit:cover;border-radius:6px;display:block;cursor:zoom-in';i.onclick=e=>{e.preventDefault();e.stopPropagation();openLB(u,i.src,hiGal)};const row=document.createElement('label');row.style.cssText='display:flex;align-items:center;gap:8px;min-height:40px;padding:4px 2px;cursor:pointer;user-select:none;-webkit-user-select:none';row.title='勾选后可批量删除';const ck=document.createElement('input');ck.type='checkbox';ck.checked=hiSel.has(n);ck.style.cssText='width:22px;height:22px;margin:0;flex:0 0 22px;accent-color:#9dccad';ck.onclick=e=>e.stopPropagation();ck.onchange=()=>{if(ck.checked){if(!hiAddRef(n)){ck.checked=false;return}hiSel.add(n)}else{hiSel.delete(n);hiRemoveRef(n)}hiMark()};const tip=document.createElement('span');tip.textContent='勾选';tip.style.cssText='font-size:13px;color:#c5d4cb';row.append(ck,tip);row.onclick=e=>e.stopPropagation();const acts=document.createElement('div');acts.style.cssText='display:flex;gap:10px;align-items:center';const dl=document.createElement('a');dl.href=u+'?download=1';dl.textContent='下载';dl.style.fontSize='12px';const x=document.createElement('a');x.href='#';x.textContent='删除';x.style.cssText='font-size:12px;color:#efa79b';x.onclick=async e=>{e.preventDefault();e.stopPropagation();if(!(await libConfirm('将删除这张图片')))return;try{await api(u,{method:'DELETE'});hiLoad()}catch(er){alert(er.message)}};const pz=document.createElement('a');pz.href='#';pz.textContent='当动作图';pz.style.fontSize='12px';pz.onclick=e=>{e.preventDefault();e.stopPropagation();poseFromHist(n)};acts.append(dl,downloadLinkButton(u),pz,x);box.append(i,row,acts);$('hiGrid').append(box)});if(!d.total)$('hiGrid').textContent='还没有单张生成的图片'}
+function hiAddRef(n){if(references.some(r=>r.hist===n))return true;const m=$('hiSel');if(references.length>=10){m.textContent='参考照片最多 10 张，已满，不能再勾选';return false}references.push({id:null,hist:n,file:null,url:'/api/history/file/'+encodeURIComponent(n)+'?thumb=1'});showReferences();status('已加入参考照片（共 '+references.length+' 张）');return true}function hiRemoveRef(n){const k=references.findIndex(r=>r.hist===n);if(k<0)return;references.splice(k,1);showReferences();status('已移出参考照片（共 '+references.length+' 张）')}async function hiFetchFile(n){const r=await fetch('/api/history/file/'+encodeURIComponent(n),{credentials:'same-origin'});const ct=(r.headers.get('Content-Type')||'').toLowerCase();if(!r.ok||!ct.startsWith('image/'))throw Error('历史图片读取失败（HTTP '+r.status+'）');const b=await r.blob();return new File([b],n,{type:b.type||ct})}
+$('hiAll').onclick=()=>{const cs=[...$('hiGrid').querySelectorAll('input[type=checkbox]')];const all=cs.length&&cs.every(c=>c.checked);cs.forEach(c=>{c.checked=!all;c.onchange()})};$('hiDel').onclick=async()=>{if(!hiSel.size){$('hiSel').textContent='请先勾选要删除的图片';return}if(!(await libConfirm('将删除 '+hiSel.size+' 张单张生成的图片')))return;try{const gone=[...hiSel];const d=await api('/api/history/delete',json({files:gone}));gone.forEach(n=>{const k=references.findIndex(r=>r.hist===n);if(k>=0)references.splice(k,1)});showReferences();hiSel.clear();hiMark();hiLoad()}catch(e){alert(e.message)}};$('hiPanel').ontoggle=()=>{if($('hiPanel').open)hiLoad().catch(()=>{})};$('hiPrev').onclick=()=>{hiPage--;hiLoad()};$('hiNext').onclick=()=>{hiPage++;hiLoad()};
+
+let trT=null;
+function trShow(d){const m=$('trMsg'),pg=$('trProg');$('trStop').hidden=d.state!=='running';$('trStart').disabled=d.state==='running';
+if(d.state==='idle'){m.textContent=d.ready_missing&&d.ready_missing.length?'还不能训练：'+d.ready_missing.join('；'):'准备好了：选视频后点「一键训练」';pg.style.display='none';return}
+let t=(d.phase||'')+' · 已用'+Math.floor(d.elapsed_s/60)+'分';
+if(d.extracted)t+='\n抽帧 '+d.extracted+' 张，筛过 '+d.checked+'，留下 '+d.kept+'（模糊'+d.blur+' 重复'+d.dup+' 无人'+d.noperson+'）';
+if(d.images)t+='\n训练集 '+d.images+' 张'+(d.balanced?'（按角度均衡挑选）':'')+'（'+d.run+'）';if(d.coverage_missing&&d.coverage_missing.length)t+='\n⚠ 缺：'+d.coverage_missing.join('、');
+if(d.gpu_note)t+='\n'+d.gpu_note;if(d.pack)t+='\n训练包：'+d.pack;if(d.sample_every)t+='\n预览间隔每 '+d.sample_every+' 步';if(d.steps_total){t+='\n训练进度 '+d.step+' / '+d.steps_total+(d.sec_per_step?'　每步 '+d.sec_per_step+' 秒'+(d.last_step_s?'（最近一步 '+d.last_step_s+' 秒）':'')+'　预计还要 '+fmtS(d.eta_s):'　（测速中…）');pg.style.display='block';pg.max=d.steps_total;pg.value=d.step}else pg.style.display='none';
+if(d.state==='done')t+='\n完成！模型文件：'+(d.outputs||[]).join(', ')+'\n（在云机 /root/autodl-tmp/train/output/）';
+if(d.state==='error')t+='\n出错：'+d.error;if(d.state==='stopped')t+='\n已停止';m.textContent=t;
+trBusy(d.state==='running');if(d.state==='running'){clearTimeout(trT);trT=setTimeout(trPoll,3000)}}
+async function trPrevLoad(run){const g=$('trPrevGrid'),meta=$('trPrevMeta');if(!g)return;try{const q=run?('?run='+encodeURIComponent(run)):'';const d=await api('/api/train/samples'+q);meta.textContent=(d.run?('轮次 '+d.run+' · '):'')+(d.count||0)+' 张预览'+(d.count?'（点图放大）':'（还没有，开训后会出现）');const names=new Set([...g.querySelectorAll('[data-n]')].map(e=>e.dataset.n));(d.samples||[]).forEach(s=>{if(names.has(s.name))return;const a=document.createElement('a');a.href=s.url;a.onclick=e=>{e.preventDefault();openLB(s.url)};a.dataset.n=s.name;a.title=s.name;const img=document.createElement('img');img.loading='lazy';StudioThumbHD.add(img,s.thumb||s.url,s.url);a.appendChild(img);g.prepend(a)}); }catch(e){if(meta)meta.textContent='预览加载失败：'+e.message}}
+async function trPoll(){try{const d=await api('/api/train');trShow(d);if(d&&(d.state==='running'||d.state==='done'||d.run))trPrevLoad(d.run);else if(!d||d.state==='idle')trPrevLoad()}catch(e){$('trMsg').textContent=e.message}}
+
+async function trDsLoad(){try{const d=await api('/api/train/datasets');const s=$('trDs');s.replaceChildren();if(!d.datasets.length){const o=document.createElement('option');o.value='';o.textContent='（还没有训练包）';s.append(o);return}d.datasets.forEach(x=>{const o=document.createElement('option');o.value=x.name;o.textContent=x.time+' · '+x.images+' 张'+({pack:' · 上传的训练包',picked:' · 勾选的图'}[x.source]||'')+(x.trained?' · 已训练过'+x.trained+'次':'')+' · '+x.name;s.append(o)})}catch(e){}}
+$('trDsStart').onclick=async()=>{const n=$('trDs').value;if(!n){$('trMsg').textContent='先选一个训练包';return}if(!confirm('用「'+$('trDs').selectedOptions[0].textContent+'」开始训练人物小模型？大约 1 小时以上，期间会出预览图。'))return;try{await api('/api/train',json({reuse_dataset:n,trigger:$('trTrig').value,sample_every:250}));trPoll()}catch(e){$('trMsg').textContent=e.message}};
+trDsLoad();
+async function trFolders(){try{const d=await api('/api/train/folders');d.folders.forEach(f=>$('trSrc').add(new Option('图片：'+(f.name==='_all_photos'?'已上传的全部照片':f.name)+'（'+f.count+'张）',f.name)))}catch(e){}}trFolders();
+$('trStart').onclick=async()=>{const fo=$('trSrc').value,v=fo?'':$('vdList').value;if(!fo&&!v){$('trMsg').textContent='请先上传并选择视频，或选一个图片文件夹';return}if(!confirm('用「'+(fo||v)+'」开始训练人物小模型？大约要 1 小时以上，期间仍可出图，但可能变慢。'))return;try{await api('/api/train',json({video:v,folder:fo,person:$('vdPerson').checked,trigger:$('trTrig').value}));trPoll()}catch(e){$('trMsg').textContent=e.message}};
+let tpFiles=[],tpSel=new Map(),tpShow=200,tpScores=null;
+function tpKey(f){return f.src+'|'+(f.batch||'')+'|'+f.name}
+function tpUrl(f){return f.src==='batch'?'/api/batches/'+f.batch+'/files/'+encodeURIComponent(f.name):'/api/inputs/'+encodeURIComponent(f.name)}
+function tpCount(){$('tpSel').textContent=tpSel.size?'已选 '+tpSel.size+(tpSel.size<10?'（至少 10 张）':''):'未选择'}
+async function tpSources(){const c=$('tpSrc'),cur=c.value;c.replaceChildren();try{const d=await api('/api/train/folders');d.folders.forEach(f=>c.add(new Option('素材库：'+(f.name==='_all_photos'?'已上传的照片（根目录）':f.name)+'（'+f.count+'张）','lib:'+(f.name==='_all_photos'?'':f.name))))}catch(e){}try{const d=await api('/api/batches');d.batches.forEach(b=>c.add(new Option('批次成品：'+b.batch+'（'+b.count+'张）','batch:'+b.batch)))}catch(e){}if([...c.options].some(o=>o.value===cur))c.value=cur}
+async function tpLoad(){const v=$('tpSrc').value;if(!v)return;const k=v.slice(0,v.indexOf(':')),n=v.slice(v.indexOf(':')+1);tpScores=null;$('tpGood').hidden=k!=='batch';try{if(k==='batch'){const d=await api('/api/batches/'+n);tpFiles=d.files.map(x=>({src:'batch',batch:n,name:x}));try{tpScores=(await api('/api/batches/'+n+'/scores')).scores}catch(e){}}else{const d=await api('/api/lib/files?folder='+encodeURIComponent(n));tpFiles=d.files.map(x=>({src:'lib',name:x}))}tpShow=200;tpRender()}catch(e){$('tpGrid').textContent=e.message}}
+function tpRender(){const g=$('tpGrid');g.replaceChildren();tpFiles.slice(0,tpShow).forEach(f=>{const key=tpKey(f),u=tpUrl(f);const b=document.createElement('div');b.className='ref';b.style.cssText='width:66px;display:flex;flex-direction:column;gap:2px;position:relative';const i=document.createElement('img');i.loading='lazy';StudioThumbHD.add(i,u+'?thumb=1',u);i.alt='图片';i.title='点图片放大预览';i.style.cssText='width:66px;height:76px;object-fit:cover;border-radius:6px;display:block;cursor:zoom-in';i.style.outline=tpSel.has(key)?'3px solid #9dccad':'none';i.onclick=e=>{e.preventDefault();e.stopPropagation();openLB(u)};const row=document.createElement('label');row.style.cssText='display:flex;align-items:center;gap:4px;min-height:40px;padding:2px 0;cursor:pointer;user-select:none;-webkit-user-select:none';const ck=document.createElement('input');ck.type='checkbox';ck.checked=tpSel.has(key);ck.style.cssText='width:22px;height:22px;margin:0;flex:0 0 22px;accent-color:#9dccad';ck.onclick=e=>e.stopPropagation();const tip=document.createElement('span');const sc=tpScores&&tpScores[f.name]&&tpScores[f.name].score;tip.textContent=sc!=null?'勾选 '+Math.round(sc):'勾选';tip.style.cssText='font-size:12px;color:#c5d4cb';ck.onchange=()=>{ck.checked?tpSel.set(key,f):tpSel.delete(key);i.style.outline=tpSel.has(key)?'3px solid #9dccad':'none';tpCount()};row.append(ck,tip);row.onclick=e=>e.stopPropagation();b.append(i,row);g.append(b)});$('tpMore').replaceChildren();if(tpFiles.length>tpShow){const m=document.createElement('button');m.textContent='显示更多（共 '+tpFiles.length+'）';m.onclick=()=>{tpShow+=200;tpRender()};$('tpMore').append(m)}if(!tpFiles.length)g.textContent='这里没有图片';tpCount()}
+$('tpBox').ontoggle=()=>{if($('tpBox').open&&!$('tpSrc').options.length)tpSources()};
+$('tpLoad').onclick=tpLoad;$('tpSrc').onchange=tpLoad;
+$('tpAll').onclick=()=>{const all=tpFiles.every(f=>tpSel.has(tpKey(f)));tpFiles.forEach(f=>all?tpSel.delete(tpKey(f)):tpSel.set(tpKey(f),f));tpRender()};
+$('tpGood').onclick=()=>{if(!tpScores){alert('这个批次还没有分数，没法按分数挑');return}const thr=Number($('qaThr').value||45);let n=0;tpFiles.forEach(f=>{const s=tpScores[f.name];tpSel.delete(tpKey(f));if(s&&!s.rejected&&s.score!=null&&s.score>=thr){tpSel.set(tpKey(f),f);n++}});tpRender();$('tpSel').textContent='已选 '+tpSel.size+'（本批达线 '+n+' 张，分数线 '+thr+'）'};
+$('tpStart').onclick=async()=>{const fs=[...tpSel.values()];if(fs.length<10){$('trMsg').textContent='只勾选了 '+fs.length+' 张，至少要 10 张才能训练';return}if(!confirm('用勾选的 '+fs.length+' 张图开始训练人物小模型？大约要 1 小时以上，期间仍可出图，但可能变慢。'))return;try{await api('/api/train',json({files:fs.map(f=>({src:f.src,batch:f.batch,name:f.name})),trigger:$('trTrig').value}));trPoll()}catch(e){$('trMsg').textContent=e.message}};
+$('trStop').onclick=async()=>{if(!(await studioConfirm('确定停止训练？')))return;await api('/api/train/stop',json({}));trPoll();studioToast('已请求停止训练')};
+trPoll();
+
+async function cvFolders(){try{const d=await api('/api/train/folders');const c=$('cvSrc'),cur=c.value;c.replaceChildren();d.folders.filter(f=>f.name!=='_all_photos').forEach(f=>c.add(new Option(f.name+'（'+f.count+'张）',f.name)));if(cur)c.value=cur}catch(e){}}
+async function cvShow(){const f=$('cvSrc').value,m=$('cvMsg');if(!f){m.textContent='还没有抽帧文件夹';return}try{const d=await api('/api/frames/coverage?folder='+encodeURIComponent(f));if(!d.tagged){m.textContent='这个文件夹还没智能分类，点「重新智能分类」';return}const L={view:'角度',framing:'景别',pitch:'俯仰',expr:'表情'};let t='共 '+d.total+' 张';for(const k in L){t+='\n'+L[k]+'：'+Object.entries(d.counts[k]).map(([a,b])=>a+' '+b).join('，')}t+='\n组合：'+Object.entries(d.combos).map(([a,b])=>a+' '+b).join('，');t+='\n'+(d.missing.length?'⚠ 缺：'+d.missing.join('、')+'（建议补拍/补视频）':'✓ 主要角度都有');if(d.few.length)t+='\n偏少(<3)：'+d.few.join('、');t+='\n训练会按角度×景别均衡挑 '+d.balanced+' 张';t+='\n分类文件夹：inputs/'+f+'/_分类/';m.textContent=t}catch(e){m.textContent=e.message}}
+$('cvShow').onclick=cvShow;
+$('cvRetag').onclick=async()=>{const f=$('cvSrc').value;if(!f)return;try{await api('/api/frames/retag',json({folder:f}));vdPoll()}catch(e){$('cvMsg').textContent=e.message}};
+cvFolders();
+
+let frSel=new Set(),frFiles=[],frShow=200,frKey='',frVal='',frData=null,frTimer=null;
+function frCount(){$('frSel').textContent=frSel.size?'已选 '+frSel.size+' 张':'未选择'}
+async function frIndex(){clearTimeout(frTimer);try{frData=await api('/api/fragments');const c=$('frVid'),cur=c.value;c.replaceChildren();if(!frData.folders.length){c.add(new Option('（还没有，上传视频后自动生成）',''))}frData.folders.forEach(x=>c.add(new Option(x.video+'（'+x.count+' 张'+(frData.running&&frData.running.folder===x.folder?' · 正在抽':'')+'）',x.folder)));if([...c.options].some(o=>o.value===cur))c.value=cur;frCats();await frLoad()}catch(e){$('frMsg').textContent=e.message}if(!$('frPanel').hidden&&frData&&frData.running)frTimer=setTimeout(frIndex,6000)}
+function frCats(){const box=$('frCats');box.replaceChildren();const x=frData&&frData.folders.find(v=>v.folder===$('frVid').value);$('frMiss').textContent='';if(!x)return;
+const chip=(label,k,v)=>{const b=document.createElement('button');b.textContent=label;b.style.cssText='padding:5px 10px;font-size:13px';if(frKey===k&&frVal===v){b.style.background='#9dccad';b.style.color='#132019'}b.onclick=()=>{frKey=k;frVal=v;frCats();frLoad()};box.append(b)};
+chip('全部 '+x.count,'','');if(x.tagged<x.count)chip('未分类 '+(x.count-x.tagged),'untagged','');
+if(x.counts)for(const k in frData.keys){const sep=document.createElement('small');sep.textContent=frData.keys[k]+'：';sep.style.marginLeft='6px';box.append(sep);Object.entries(x.counts[k]||{}).forEach(([v,n])=>chip(v+' '+n,k,v))}
+let t=x.counts?(x.missing&&x.missing.length?'⚠ 缺：'+x.missing.join('、')+'（建议补拍/补视频）':'✓ 主要角度都有'):'这个视频还没智能分类';if(x.few&&x.few.length)t+='\n偏少(<3)：'+x.few.join('、');if(frData.running&&frData.running.folder===x.folder)t+='\n正在处理：'+(frData.running.phase||'')+'（会自动刷新）';$('frMiss').textContent=t}
+async function frLoad(){const f=$('frVid').value;$('frGrid').replaceChildren();if(!f)return;try{const d=await api('/api/fragments/files?folder='+encodeURIComponent(f)+'&key='+encodeURIComponent(frKey)+'&val='+encodeURIComponent(frVal));frFiles=d.files;frRender()}catch(e){$('frGrid').textContent=e.message}}
+function frRender(){const g=$('frGrid');g.replaceChildren();if(!imgShow.fr){$('frMore').replaceChildren();g.textContent=frFiles.length?'图片已收起（共 '+frFiles.length+' 张），点「展开图片」查看；勾选不受影响':'';return}frFiles.slice(0,frShow).forEach(it=>{const n=it.name,u='/api/inputs/'+encodeURIComponent(n);const b=document.createElement('div');b.className='ref';b.style.cssText='width:66px;display:flex;flex-direction:column;gap:2px;position:relative';const i=document.createElement('img');i.loading='lazy';StudioThumbHD.add(i,u+'?thumb=1',u);i.alt='人物碎片';i.title=[it.tags.view,it.tags.framing,it.tags.pitch,it.tags.expr].filter(Boolean).join(' · ')||'点图片放大预览';i.style.cssText='width:66px;height:76px;object-fit:cover;border-radius:6px;display:block;cursor:zoom-in';i.style.outline=frSel.has(n)?'3px solid #9dccad':'none';i.onclick=e=>{e.preventDefault();e.stopPropagation();openLB(u)};const row=document.createElement('label');row.style.cssText='display:flex;align-items:center;gap:4px;min-height:40px;padding:2px 0;cursor:pointer;user-select:none;-webkit-user-select:none';const ck=document.createElement('input');ck.type='checkbox';ck.checked=frSel.has(n);ck.style.cssText='width:22px;height:22px;margin:0;flex:0 0 22px;accent-color:#9dccad';ck.onclick=e=>e.stopPropagation();const tip=document.createElement('span');tip.textContent='勾选';tip.style.cssText='font-size:12px;color:#c5d4cb';ck.onchange=()=>{ck.checked?frSel.add(n):frSel.delete(n);i.style.outline=frSel.has(n)?'3px solid #9dccad':'none';frCount()};row.append(ck,tip);row.onclick=e=>e.stopPropagation();b.append(i,row);g.append(b)});$('frMore').replaceChildren();if(frFiles.length>frShow){const m=document.createElement('button');m.textContent='显示更多（共 '+frFiles.length+'）';m.onclick=()=>{frShow+=200;frRender()};$('frMore').append(m)}if(!frFiles.length)g.textContent='这一类还没有图片';frCount()}
+$('frOpen').onclick=()=>{const p=$('frPanel');p.hidden=!p.hidden;$('frOpen').textContent=p.hidden?'人物碎片素材库':'收起碎片库';if(!p.hidden)frIndex()};
+$('frVid').onchange=()=>{frKey='';frVal='';frShow=200;frCats();frLoad()};$('frRefresh').onclick=frIndex;
+$('frAll').onclick=()=>{const all=frFiles.length&&frFiles.every(x=>frSel.has(x.name));frFiles.forEach(x=>all?frSel.delete(x.name):frSel.add(x.name));frRender()};
+$('frUse').onclick=async()=>{if(!frSel.size){$('frMsg').textContent='请先勾选';return}if(frSel.size>10){$('frMsg').textContent='素材包参考最多 10 张，现在勾了 '+frSel.size+' 张';return}pkSel=new Set([...frSel]);$('pkSel').textContent='已选 '+pkSel.size+' 张';await pkLoad();$('pkStd').scrollIntoView({behavior:'smooth'});$('frMsg').textContent='已放进素材包的参考选择'};
+$('frTrain').onclick=async()=>{const fs=[...frSel];if(fs.length<10){$('frMsg').textContent='只勾选了 '+fs.length+' 张，至少要 10 张才能训练';return}if(!confirm('用勾选的 '+fs.length+' 张人物碎片开始训练人物小模型？大约要 1 小时以上，训练期间仍可出图，可能变慢。'))return;try{await api('/api/train',json({files:fs.map(n=>({src:'lib',name:n})),trigger:$('trTrig').value}));$('frMsg').textContent='已开始训练，进度看下面「人物小模型训练」';trPoll()}catch(e){$('frMsg').textContent=e.message}};
+
+// ---- 训练包（charpack-v1）上传 → 解包校验 → 开训 ----
+function fmtS(s){if(s==null)return '—';s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?h+'小时'+m+'分':m?m+'分'+(s%60)+'秒':s+'秒'}
+let TRB=false;const TRB_IDS=['generate','pkStd','pkAdv','pkResume'];
+function trBusy(b){TRB=false;TRB_IDS.forEach(i=>{const e=$(i);if(e){e.disabled=false;e.title=b?'训练中，出图可能变慢（仍可点）':''}})}
+/* generate allowed during training */
+const CPN={angle:'角度',framing:'景别',pitch:'俯仰',expression:'表情',front:'正面',three_quarter:'侧前',side:'侧面',back:'背面',head:'头肩',half:'半身',full:'全身',level:'平视',up:'抬头',down:'低头',neutral:'平静',smile:'微笑',laugh:'大笑',angry:'生气',sad:'难过',surprised:'惊讶',shout:'喊叫',unknown:'未知'};
+const cpN=x=>String(x).split(':').map(y=>CPN[y]||y).join('·');
+let cpT=null,cpAsked=false;
+function cpShow(d){const m=$('cpMsg');$('cpTrain').hidden=d.state!=='ready';if(d.state==='idle'){m.textContent='';return}
+let t='训练包 '+(d.zip||'')+'：'+(d.phase||d.state);
+if(d.images)t+='\n有效图片 '+d.images+' 张，触发词 '+d.trigger+'，计划 '+d.steps_total+' 步'+(d.captions_made?'；自动补标注 '+d.captions_made+' 张':'')+(d.bad?'；损坏 '+d.bad+' 张已跳过':'');
+if(d.coverage)t+='\n'+Object.entries(d.coverage).map(([k,v])=>CPN[k]+'：'+Object.entries(v).filter(([a,n])=>n).map(([a,n])=>CPN[a]+n).join(' ')).join('\n');
+if(d.missing&&d.missing.length)t+='\n⚠ 缺：'+d.missing.map(cpN).join('、');
+if(d.warnings&&d.warnings.length)t+='\n提示：'+d.warnings.join('；');
+if(d.state==='error')t+='\n出错：'+d.error;m.textContent=t;
+if(d.state==='running'){clearTimeout(cpT);cpT=setTimeout(cpPoll,1500)}
+if(d.state==='ready'&&$('cpAuto').checked&&!cpAsked){cpAsked=true;setTimeout(()=>{if(confirm(t+'\n\n确定开始训练？（点「确定」开始；训练约 1 小时以上，期间仍可出图，可能变慢）'))cpGo()},50)}}
+async function cpPoll(){try{cpShow(await api('/api/charpack'))}catch(e){$('cpMsg').textContent=e.message}}
+async function cpGo(){try{const r=await api('/api/charpack/train',json({}));$('cpMsg').textContent+='\n已开训。'+(r.freed||'');trPoll()}catch(e){$('cpMsg').textContent+='\n'+e.message}}
+$('cpTrain').onclick=()=>{if(confirm('用这个训练包开始训练？训练期间仍可出图，可能变慢。'))cpGo()};
+$('cpUpBtn').onclick=()=>$('cpFile').click();
+$('cpFile').onchange=async()=>{const f=$('cpFile').files[0];$('cpFile').value='';if(!f)return;const M=$('cpMsg'),P=$('cpProg');cpAsked=false;
+try{const init=await api('/api/charpack/chunk',json({name:f.name,size:f.size,lastModified:f.lastModified}));let off=init.received||0;const CH=8*1048576;P.style.display='block';let fails=0;
+while(off<f.size){const end=Math.min(f.size,off+CH);try{const r=await fetch('/api/charpack/chunk/'+init.id+'?offset='+off,{method:'PUT',body:f.slice(off,end),headers:{'X-Studio-Token':token,'Content-Type':'application/octet-stream'}});let d={};try{d=await r.json()}catch{}
+if(r.ok){off=d.received;fails=0}else if(r.status===409&&d.received!=null){off=d.received}else throw Error(d.error||('HTTP '+r.status))}catch(e){if(++fails>8)throw e;M.textContent='网络断了，'+fails+' 次重试中…（断点续传）';await new Promise(s=>setTimeout(s,3000));continue}
+P.value=Math.floor(off*100/f.size);M.textContent='上传训练包 '+(off/1048576).toFixed(1)+' / '+(f.size/1048576).toFixed(1)+' MB（'+P.value+'%）'}
+await api('/api/charpack/chunk/'+init.id+'/finish',json({trigger:$('trTrig').value}));P.style.display='none';M.textContent='上传完成，正在解包校验…';cpPoll()}catch(e){M.textContent='训练包上传失败：'+e.message+'（重新选同一个文件会从断点接着传）'}};
+cpPoll();
+
+let spItems=[];const spM=m=>{$('spMsg').textContent=m||''};
+async function spLoad(keep){try{const d=await api('/api/saved-prompts');spItems=d.items||[];const c=$('spSel'),cur=keep!==undefined?keep:c.value;c.replaceChildren(new Option('常用提示词…（'+spItems.length+' 条）',''));spItems.forEach(i=>c.add(new Option(i.name,i.name)));if(spItems.some(i=>i.name===cur))c.value=cur}catch(e){spM(e.status===404?'常用提示词要等工作台重启后才能用':e.message)}}
+$('spSel').onchange=()=>{const i=spItems.find(x=>x.name===$('spSel').value);if(!i)return;const d=$('description');if(d.value.trim()&&d.value!==i.text&&!confirm('用「'+i.name+'」替换描述框里现在的内容？'))return;d.value=i.text;d.dispatchEvent(new Event('input'));spM('已填入，可以接着改')};
+async function spPut(name,overwrite){const text=$('description').value;if(!text.trim()){spM('描述框是空的');return false}try{await api('/api/saved-prompts',json({name,text,overwrite}));await spLoad(name);spM('已保存「'+name+'」');return true}catch(e){if(e.status===409&&!overwrite){if(confirm('已有同名「'+name+'」，覆盖它吗？'))return spPut(name,true);return false}spM(e.message);return false}}
+$('spSave').onclick=async()=>{const n=(prompt('给这条提示词起个名字（最多 40 字）',$('spSel').value)||'').trim();if(!n)return;if(n.length>40){spM('名字最多 40 字');return}if($('description').value.length>4000){spM('提示词最多 4000 字');return}spPut(n,false)};
+$('spOver').onclick=()=>{const n=$('spSel').value;if(!n){spM('先在下拉框里选一条');return}if(!confirm('用描述框现在的内容覆盖「'+n+'」？'))return;spPut(n,true)};
+$('spRen').onclick=async()=>{const o=$('spSel').value;if(!o){spM('先在下拉框里选一条');return}const n=(prompt('新名字（最多 40 字）',o)||'').trim();if(!n||n===o)return;try{await api('/api/saved-prompts/rename',json({old:o,new:n}));await spLoad(n);spM('已改名')}catch(e){spM(e.message)}};
+$('spDel').onclick=async()=>{const n=$('spSel').value;if(!n){spM('先在下拉框里选一条');return}if(!(await studioConfirm('删除常用提示词「'+n+'」？删除后无法恢复。')))return;try{await api('/api/saved-prompts/delete',json({name:n}));await spLoad('');spM('已删除')}catch(e){spM(e.message)}};
+spLoad().then(()=>{const c=$('spSel');if(spItems.length&&!$('description').value.trim()){c.value=spItems[0].name;c.onchange()}});
+
+
+async function loraLoad(){try{const d=await api('/api/lora');if(!$('useLora'))return;if(!d.ready){$('useLora').checked=false;$('useLora').disabled=true;if($('loraMsg'))$('loraMsg').textContent='还没有角色 LoRA 文件'}else{$('useLora').disabled=false;if($('loraMsg'))$('loraMsg').textContent='已挂载 · 触发词 '+d.trigger+' · 强度 '+d.strength_default}}catch(e){if($('loraMsg'))$('loraMsg').textContent=''}}
+loraLoad();
+
+function poseOnlyArmed(){const el=$('posePoseOnly');return !!(el&&el.checked)}
+function poseOnlyArmUI(){if(!poseOnlyArmed())return;if($('useLora'))$('useLora').checked=false;/* kind hardcoded character */$('poseMsg').textContent=pose?'已启用「只改动作」：点下方生成即可（描述可留空）':'已勾选只改动作，请再勾选一个姿势（或上传动作图）'}
+$('posePoseOnly').onchange=()=>{if(poseOnlyArmed()){if(!pose)$('poseMsg').textContent='请先勾选姿势库里的姿势，或上传动作图';poseOnlyArmUI()}else{$('poseMsg').textContent=''}};
+let pose=null;function poseShow(){$('posePrev').replaceChildren();$('poseClear').hidden=!pose;if(!pose)return;const b=document.createElement('div');b.className='ref';const i=document.createElement('img');i.src=pose[$('poseFace').checked?'preview':'preview_body']+'&t='+Date.now();i.alt='动作骨架';i.title='提取出的骨架，点开看大图';i.style.cursor='zoom-in';i.onclick=()=>openLB(i.src);b.append(i);$('posePrev').append(b)}
+function poseReset(){pose=null;$('poseMsg').textContent='';poseShow()}
+$('poseChoose').onclick=()=>$('poseFile').click();$('poseClear').onclick=poseReset;$('poseFace').onchange=poseShow;
+
+(function(){const box=$('poseBox');if(!box)return;box.ondragover=e=>{e.preventDefault();box.style.borderColor='#6c8'};box.ondragleave=()=>{box.style.borderColor='#303b33'};box.ondrop=e=>{e.preventDefault();box.style.borderColor='#303b33';const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];if(!f)return;const dt=new DataTransfer();dt.items.add(f);$('poseFile').files=dt.files;$('poseFile').dispatchEvent(new Event('change'))}})();
+async function poseShrink(f){try{const bmp=await createImageBitmap(f);const s=Math.min(1,1280/Math.max(bmp.width,bmp.height));if(s>=1&&f.size<1.5e6)return f;const c=document.createElement('canvas');c.width=Math.round(bmp.width*s);c.height=Math.round(bmp.height*s);c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);const b=await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));return b?new File([b],'pose.jpg',{type:'image/jpeg'}):f}catch(e){return f}}
+async function poseWait(r){let n=0;while(r&&r.pending){if(++n>120)throw Error('骨架提取太久，请稍后在姿势库里看看');await new Promise(z=>setTimeout(z,1500));const s=await api('/api/pose/job/'+r.pending);if(s.state==='running')continue;if(s.state==='error')throw Error(s.error);r=s}return r}
+function poseApplied(p){pose=p;$('poseMsg').textContent=(p.reused?'已从姿势库直接取用：':'已提取并存进姿势库：')+(p.name||'')+' · '+p.people+' 人 '+p.hands+' 手 '+p.faces+' 脸';poseShow();poseLibLoad()}
+async function poseRun(fn,msg){$('poseChoose').disabled=true;$('poseMsg').textContent=msg;try{poseApplied(await poseWait(await fn()))}catch(e){pose=null;$('poseMsg').textContent=e.message;poseShow()}finally{$('poseChoose').disabled=false}}
+$('poseFile').onchange=async()=>{const f0=$('poseFile').files[0];$('poseFile').value='';if(!f0)return;if(f0.size>25*1024*1024){$('poseMsg').textContent='动作参考图不得超过 25 MB';return}const f=await poseShrink(f0);poseRun(()=>{const form=new FormData();form.append('image',f);return api('/api/pose',{method:'POST',body:form})},'正在提取骨架，大约1分钟…')};
+function poseFromHist(n){poseRun(()=>api('/api/pose/from-history',json({history:n})),'正在用这张历史图提取骨架…');$('poseBox').scrollIntoView({behavior:'smooth'})}
+async function poseLibLoad(){const g=$('poseLib');if(!g)return;let d;try{d=await api('/api/poses')}catch(e){g.textContent='姿势库读取失败';return}g.replaceChildren();if(!d.items.length){g.textContent='还没有保存的姿势';return}d.items.forEach(it=>{const b=document.createElement('div');b.style.cssText='width:86px;display:flex;flex-direction:column;gap:2px';const i=document.createElement('img');i.loading='lazy';StudioThumbHD.add(i,it.thumb);i.alt=it.name;i.title='骨架，点开看大图';i.style.cssText='width:86px;height:110px;object-fit:contain;background:#000;border-radius:6px;cursor:zoom-in';const on=pose&&pose.lib_id===it.id;i.style.outline=on?'3px solid #9dccad':'none';i.onclick=e=>{e.preventDefault();openLB(it.thumb)};const row=document.createElement('label');row.style.cssText='display:flex;align-items:center;gap:4px;min-height:34px;cursor:pointer';const ck=document.createElement('input');ck.type='checkbox';ck.checked=on;ck.style.cssText='width:22px;height:22px;margin:0;accent-color:#9dccad';ck.onchange=async()=>{if(ck.checked){try{poseApplied(await api('/api/poses/'+it.id+'/use',{method:'POST'}))}catch(e){$('poseMsg').textContent=e.message;ck.checked=false}}else{poseReset();poseLibLoad()}};const tip=document.createElement('span');tip.textContent=it.name;tip.style.cssText='font-size:12px;color:#c5d4cb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';row.append(ck,tip);const acts=document.createElement('div');acts.style.cssText='display:flex;gap:8px';const rn=document.createElement('a');rn.href='#';rn.textContent='改名';rn.style.fontSize='12px';rn.onclick=async e=>{e.preventDefault();const v=prompt('新名称',it.name);if(!v)return;try{await api('/api/poses/'+it.id+'/rename',json({name:v}));poseLibLoad()}catch(er){alert(er.message)}};const x=document.createElement('a');x.href='#';x.textContent='删除';x.style.cssText='font-size:12px;color:#efa79b';x.onclick=async e=>{e.preventDefault();if(!(await studioConfirm('确定删除「'+it.name+'」？')))return;try{await api('/api/poses/'+it.id,{method:'DELETE'});if(pose&&pose.lib_id===it.id)poseReset();poseLibLoad()}catch(er){alert(er.message)}};acts.append(rn,x);b.append(i,row,acts);g.append(b)})}
+poseLibLoad();
+
+/* === character asset library (Qwen2.1) === */
+const msg=t=>{const el=$('charAssetMsg'); if(el) el.textContent=t||'';};
+  const st=t=>{const el=$('charAssetStatus'); if(el) el.textContent=t||'';};
+  async function ensureRefIds(){
+    if(typeof references==='undefined') throw Error('参考列表未就绪');
+    const on=references.filter(r=>!r.off);
+    if(!on.length) throw Error('请先勾选至少一张人物参考照片');
+    for(let i=0;i<references.length;i++){
+      const ref=references[i];
+      if(ref.off||ref.id) continue;
+      if(ref.hist&&!window.noHistExisting){
+        try{ref.id=(await apiOnce('/api/upload-existing',json({history:ref.hist}))).id; if(ref.id) continue;}
+        catch(e){window.noHistExisting=true}
+      }
+      if(!ref.file&&ref.hist) ref.file=await hiFetchFile(ref.hist);
+      if(ref.lib&&!window.noUploadExisting){
+        try{ref.id=(await apiOnce('/api/upload-existing',json({name:ref.lib}))).id; if(ref.id) continue;}
+        catch(e){if(e.status===404||e.status===405) window.noUploadExisting=true}
+      }
+      if(!ref.file&&ref.lib) ref.file=await libFetchFile(ref.lib);
+      if(!ref.file&&!ref.id) throw Error('参考照片未就绪，请重新添加');
+      if(!ref.id){
+        const form=new FormData(); form.append('image',ref.file);
+        ref.id=(await api('/api/upload',{method:'POST',body:form})).id;
+      }
+    }
+    return references.filter(r=>!r.off).map(r=>r.id);
+  }
+  function renderPacks(packs){
+    const box=$('charAssetList'); if(!box) return;
+    box.replaceChildren();
+    if(!packs||!packs.length){ box.innerHTML='<small class="muted">还没有人物资产包</small>'; return; }
+    for(const p of packs){
+      const row=document.createElement('div');
+      row.style.cssText='border:1px solid #46564b;border-radius:8px;padding:8px;margin:8px 0';
+      const head=document.createElement('div');
+      head.textContent=`${p.lib_folder||p.id} · ${p.state} · ${p.message||''}`;
+      row.appendChild(head);
+      const files=p.files||[];
+      if(files.length){
+        const grid=document.createElement('div'); grid.className='refs'; grid.style.marginTop='8px';
+        for(const f of files){
+          const cell=document.createElement('div'); cell.className='ref'; cell.style.width='72px';
+          const lab=document.createElement('label'); lab.style.cssText='display:block;font-size:11px;text-align:center';
+          const chk=document.createElement('input'); chk.type='checkbox'; chk.dataset.lib=f.lib||'';
+          const img=document.createElement('img');
+          img.alt=f.label||'';
+          img.style.cssText='width:66px;height:76px;object-fit:cover;border-radius:6px;display:block';
+          if(f.lib){
+            const full='/api/inputs/'+f.lib.split('/').map(encodeURIComponent).join('/');
+            img.src=full+'?thumb=1';
+            img.style.cursor='zoom-in';
+            img.title='点图片放大预览';
+            img.onclick=(e)=>{e.preventDefault();e.stopPropagation();openLB(full,img.src);};
+            img.onerror=()=>{img.removeAttribute('src'); img.alt='(图)';};
+          }
+          const cap=document.createElement('span'); cap.textContent=f.label||f.key||'';
+          lab.appendChild(chk); lab.appendChild(img); lab.appendChild(cap);
+          cell.appendChild(lab); grid.appendChild(cell);
+        }
+        row.appendChild(grid);
+        const use=document.createElement('button'); use.type='button'; use.textContent='勾选加入人物参考';
+        use.onclick=()=>{
+          const chosen=[...row.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.dataset.lib).filter(Boolean);
+          if(!chosen.length){ msg('请先勾选要加入的资产图'); return; }
+          for(const n of chosen){
+            if(references.length>=10){ msg('参考照片最多 10 张'); break; }
+            if(references.some(r=>r.lib===n)) continue;
+            references.push({id:null,lib:n,file:null,url:'/api/inputs/'+encodeURIComponent(n)+'?thumb=1'});
+          }
+          if(typeof showReferences==='function') showReferences();
+          msg('已加入人物参考（可再点生成图片/出片）');
+        };
+        row.appendChild(use);
+      }
+      if(p.state==='error'||p.state==='need_gpu'){
+        const rt=document.createElement('button'); rt.type='button'; rt.textContent='重试';
+        rt.onclick=async()=>{
+          try{ await api('/api/character-assets/'+p.id+'/retry',json({})); await refresh(); }
+          catch(e){ msg(e.message||'重试失败'); }
+        };
+        row.appendChild(rt);
+      }
+      box.appendChild(row);
+    }
+  }
+  let mpRefreshTimer=null;
+  async function refresh(){
+    try{
+      const d=await api('/api/character-assets');
+      renderPacks(d.packs||[]);
+      const busy=(d.packs||[]).some(p=>p.state==='running'||p.state==='queued');
+      st(busy?'生成中…':'');
+      if(busy && !mpRefreshTimer) mpRefreshTimer=setInterval(refresh, 4000);
+      if(!busy && mpRefreshTimer){ clearInterval(mpRefreshTimer); mpRefreshTimer=null; }
+    }catch(e){ st(e.message||''); }
+  }
+  async function start(){
+    const btn=$('charAssetBtn'); if(btn) btn.disabled=true;
+    try{
+      msg('正在准备参考并提交到本地 Qwen2.1…');
+      const ids=await ensureRefIds();
+      const size=2048;
+      const d=await api('/api/character-assets/generate', json({references:ids, size}));
+      msg(d.message||'已提交');
+      await refresh();
+    }catch(e){ msg(e.message||'生成失败',); }
+    finally{ if(btn) btn.disabled=false; }
+  }
+  function boot(){
+    const b=$('charAssetBtn'); if(b) b.addEventListener('click', start);
+    const r=$('charAssetRefresh'); if(r) r.addEventListener('click', refresh);
+    refresh();
+  }
+  boot();
+
+</script><!-- histzip -->
+<div id="hzBox" style="margin:10px 0;padding:10px;border:1px solid #3a4a40;border-radius:8px;display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><button id="hzAll" type="button">打包下载全部</button><button id="hzSel" type="button">打包下载所选</button><span id="hzMsg" style="font-size:13px;color:#c5d4cb"></span></div>
+<div style="font-size:13px;color:#f0c27b">下完在 Mac 上解压核对张数，再回来勾选删除。</div></div>
+<script>
+(()=>{const X=i=>document.getElementById(i);const box=X('hzBox'),grid=X('hiGrid');if(grid&&grid.parentNode)grid.parentNode.insertBefore(box,grid);
+async function info(){try{const r=await fetch('/api/history/zipinfo',{credentials:'same-origin'});const d=await r.json();X('hzAll').textContent='打包下载全部（'+d.count+' 张，约 '+(d.bytes/1048576).toFixed(0)+' MB）';X('hzAll').disabled=!d.count}catch(e){}}
+X('hzAll').onclick=()=>{X('hzMsg').textContent='已开始下载，浏览器下载栏里看进度';location.href='/api/history/zip'};
+X('hzSel').onclick=()=>{const s=(typeof hiSel!=='undefined')?[...hiSel]:[];if(!s.length){X('hzMsg').textContent='请先在下面勾选图片';return}X('hzMsg').textContent='已开始下载所选 '+s.length+' 张';location.href='/api/history/zip?'+s.map(n=>'f='+encodeURIComponent(n)).join('&')};
+if(typeof hiLoad==='function'){const old=hiLoad;hiLoad=async function(){const r=await old.apply(this,arguments);info();return r}}
+info();})();
+</script>
+</html>
+<script>
+(function(){let ov,im,msg,tip,btnPrev,btnNext,cnt,viewSeq=0,showing=null;
+let lbList=[],lbIdx=-1,touchX=0,touchY=0,touchT=0;
+const mem=new Map();window.addEventListener('studio-cache-clear',()=>{close();for(const e of mem.values()){if(e.viewUrl)URL.revokeObjectURL(e.viewUrl);if(e.prevUrl)URL.revokeObjectURL(e.prevUrl)}mem.clear()});
+function keyOf(url){try{const u=new URL(url,location.origin);['download','chunk','size','thumb','t','preview','kind'].forEach(k=>u.searchParams.delete(k));return u.pathname+(u.searchParams.toString()?('?'+u.searchParams.toString()):'')}catch(e){return String(url||'').replace(/[?&](download=1|chunk=\d+|size=\d+|thumb=1|t=\d+|preview=1|kind=\w+)/g,'').replace(/\?&/,'?').replace(/[?&]$/,'')}}
+function pct(off,tot){return tot?Math.min(100,Math.round(off/tot*100)):0}
+function tipFlash(t){if(!tip)return;tip.textContent=t;tip.style.opacity='1';clearTimeout(tip._t);tip._t=setTimeout(()=>{tip.style.opacity='0'},1100)}
+function close(){if(!ov)return;ov.style.display='none';viewSeq++;showing=null;lbList=[];lbIdx=-1;im.removeAttribute('src');document.body.style.overflow='';if(cnt)cnt.textContent='';if(tip)tip.style.opacity='0'}
+function updateChrome(){const multi=lbList.length>1;if(btnPrev){btnPrev.style.display=multi?'':'none';btnPrev.style.opacity=lbIdx<=0?'0.3':'0.85'}if(btnNext){btnNext.style.display=multi?'':'none';btnNext.style.opacity=lbIdx>=lbList.length-1?'0.3':'0.85'}if(cnt)cnt.textContent=multi?((lbIdx+1)+' / '+lbList.length):''}
+function go(delta){if(!ov||ov.style.display==='none')return;if(!lbList.length)return;const n=lbIdx+delta;if(n<0){tipFlash('已经是第一张');return}if(n>=lbList.length){tipFlash('已经是最后一张');return}const it=lbList[n];openLB(it.url,it.thumb,lbList)}
+function build(){ov=document.createElement('div');ov.id='lbOverlay';ov.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;touch-action:pan-y pinch-zoom';
+im=document.createElement('img');im.alt='大图';im.style.cssText='max-width:100vw;max-height:100vh;object-fit:contain;display:block;user-select:none;-webkit-user-select:none';
+const x=document.createElement('button');x.textContent='✕';x.setAttribute('aria-label','关闭');x.style.cssText='position:fixed;top:max(10px,env(safe-area-inset-top));right:12px;width:44px;height:44px;border-radius:22px;border:0;background:rgba(255,255,255,.2);color:#fff;font-size:22px;z-index:100000';
+msg=document.createElement('div');msg.style.cssText='position:fixed;bottom:max(16px,env(safe-area-inset-bottom));left:0;right:0;text-align:center;color:#ddd;font-size:14px;pointer-events:none;z-index:100000';
+cnt=document.createElement('div');cnt.style.cssText='position:fixed;top:max(14px,env(safe-area-inset-top));left:0;right:0;text-align:center;color:#ccc;font-size:13px;pointer-events:none;z-index:100000';
+tip=document.createElement('div');tip.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);color:#fff;padding:10px 18px;border-radius:10px;font-size:15px;opacity:0;transition:opacity .18s;pointer-events:none;z-index:100001';
+btnPrev=document.createElement('button');btnPrev.textContent='\u2039';btnPrev.setAttribute('aria-label','上一张');btnPrev.style.cssText='position:fixed;left:max(6px,env(safe-area-inset-left));top:50%;transform:translateY(-50%);width:42px;height:72px;border-radius:10px;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:34px;line-height:1;z-index:100000;display:none;padding:0';
+btnNext=document.createElement('button');btnNext.textContent='\u203A';btnNext.setAttribute('aria-label','下一张');btnNext.style.cssText='position:fixed;right:max(6px,env(safe-area-inset-right));top:50%;transform:translateY(-50%);width:42px;height:72px;border-radius:10px;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:34px;line-height:1;z-index:100000;display:none;padding:0';
+x.onclick=e=>{e.stopPropagation();close()};btnPrev.onclick=e=>{e.stopPropagation();go(-1)};btnNext.onclick=e=>{e.stopPropagation();go(1)};
+ov.onclick=e=>{if(e.target!==im&&e.target!==btnPrev&&e.target!==btnNext)close()};im.onclick=e=>{e.stopPropagation();close()};
+ov.addEventListener('touchstart',e=>{if(e.touches.length!==1){touchT=0;return}touchX=e.touches[0].clientX;touchY=e.touches[0].clientY;touchT=Date.now()},{passive:true});
+ov.addEventListener('touchend',e=>{if(!touchT||e.changedTouches.length!==1){touchT=0;return}const dx=e.changedTouches[0].clientX-touchX,dy=e.changedTouches[0].clientY-touchY,dt=Date.now()-touchT;touchT=0;if(dt>900)return;if(Math.abs(dx)<48)return;if(Math.abs(dx)<Math.abs(dy)*1.15)return;if(dx<0)go(1);else go(-1)},{passive:true});
+ov.append(im,x,msg,cnt,tip,btnPrev,btnNext);document.body.append(ov);
+document.addEventListener('keydown',e=>{if(!ov||ov.style.display==='none')return;if(e.key==='Escape')close();else if(e.key==='ArrowLeft'){e.preventDefault();go(-1)}else if(e.key==='ArrowRight'){e.preventDefault();go(1)}})}
+const tok=()=>(typeof token!=='undefined'?token:'');
+const hdr=()=>({'X-Studio-Token':tok(),'Content-Type':'application/json'});
+async function jpost(path,body){const r=await fetch(path,{method:'POST',credentials:'same-origin',headers:hdr(),body:JSON.stringify(body||{})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||('HTTP '+r.status));return d}
+async function jget(path){const r=await fetch(path,{credentials:'same-origin',headers:{'X-Studio-Token':tok()}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||('HTTP '+r.status));return d}
+async function pullChunks(fileUrl,onProg,resumeKey,resumeKind){const CHUNK=32768;const kind=resumeKind||'view';const base=resumeKey||fileUrl;const parts=[];let offset=0,total=null,ctype='image/jpeg';
+try{if(resumeKey&&StudioCache.loadPartial){const part=await StudioCache.loadPartial(base,kind);if(part&&Array.isArray(part.parts)&&part.offset>0){for(const p of part.parts)parts.push(p instanceof ArrayBuffer?p:(p&&p.buffer?p.buffer:p));offset=part.offset|0;total=part.total;ctype=part.type||ctype;if(onProg)onProg(offset,total,false,0);StudioCache.log&&StudioCache.log('lb-partial-resume',{kind,offset,total})}}}catch{}
+async function one(u){let last;for(let t=1;t<=6;t++){try{const r=await fetch(u,{credentials:'same-origin',cache:'no-store',headers:{'X-Studio-Token':tok()}});if(!r.ok)throw Error('HTTP '+r.status);const buf=await r.arrayBuffer();return{r,buf}}catch(err){last=err;if(onProg)onProg(offset,total,true,t);await new Promise(r=>setTimeout(r,200*t))}}throw last}
+for(;;){const sep=fileUrl.includes('?')?'&':'?';const {r,buf}=await one(fileUrl+sep+'chunk='+offset+'&size='+CHUNK);const tl=r.headers.get('X-Total-Length');if(tl)total=parseInt(tl,10);const ct=r.headers.get('Content-Type');if(ct&&ct.indexOf('image/')===0)ctype=ct.split(';')[0].trim();if(!buf.byteLength){if(total==null||offset>=total)break;throw Error('empty chunk')}parts.push(buf);offset+=buf.byteLength;if(onProg)onProg(offset,total,false,0);try{if(resumeKey)await StudioCache.savePartial(base,kind,{offset,total,type:ctype,parts})}catch{}if(total!=null&&offset>=total)break;if(total==null&&buf.byteLength<CHUNK)break}
+if(total!=null&&offset<total)throw Error('truncated');try{if(resumeKey)await StudioCache.clearPartial(base,kind)}catch{}
+return{blob:new Blob(parts,{type:ctype||'image/jpeg'}),offset,total:total||offset}}
+async function ack(url,offset,total){try{await jpost('/api/lb/progress',{url,offset,total})}catch(e){}}
+window.openLB=async function(url,thumb,gallery){if(!ov)build();
+if(Array.isArray(gallery)&&gallery.length){lbList=gallery.map(g=>typeof g==='string'?{url:g,thumb:null}:{url:g.url,thumb:g.thumb||null});const k=keyOf(url);lbIdx=lbList.findIndex(g=>keyOf(g.url)===k);if(lbIdx<0){lbList=[{url,thumb:thumb||null}];lbIdx=0}}else{lbList=[{url,thumb:thumb||null}];lbIdx=0}
+updateChrome();
+viewSeq++;const my=viewSeq;ov.style.display='flex';document.body.style.overflow='hidden';
+if(url&&(url.startsWith('blob:')||url.startsWith('data:'))){showing=null;im.src=url;msg.textContent='';return}
+const clean=keyOf(url);showing=clean;msg.textContent='云端准备预览…';
+if(thumb)im.src=thumb;
+const m=mem.get(clean);
+if(m&&m.viewUrl){im.src=m.viewUrl;msg.textContent='';}
+try{
+  await StudioCache.warm().catch(()=>{});
+  const cached=await StudioCache.get(clean,{kind:'view'}).catch(()=>null);if(my!==viewSeq)return;if(cached){const viewUrl=URL.createObjectURL(cached);im.src=viewUrl;msg.textContent='';mem.set(clean,{viewUrl});StudioCache.log&&StudioCache.log('lb-cache-hit',{url:clean});return}
+  const thumbCached=await StudioCache.get(clean,{kind:'thumb',passive:true}).catch(()=>null);
+  if(thumbCached&&my===viewSeq){const tu=URL.createObjectURL(thumbCached);im.src=tu;msg.textContent='缓存缩略图，拉清晰图…'}
+  let st=await jpost('/api/lb/prepare',{url:clean});
+  for(let i=0;i<40&&!st.preview_ready&&my===viewSeq;i++){await new Promise(r=>setTimeout(r,150));st=await jget('/api/lb/status?url='+encodeURIComponent(clean))}
+  if(my!==viewSeq||showing!==clean)return;
+  if(st.offset>0)msg.textContent='云端进度 '+pct(st.offset,st.total||st.view_bytes||st.preview_bytes)+'%，先显示预览…';
+  const prevQ='/api/lb/file?kind=preview&url='+encodeURIComponent(clean);
+  const prev=await pullChunks(prevQ,(off,tot,retry,t)=>{if(showing!==clean||my!==viewSeq)return;msg.textContent=retry?('预览分片重试 '+t+'/6…'):('预览 '+pct(off,tot)+'%')},clean,'thumb');
+  if(my!==viewSeq||showing!==clean)return;
+  const prevUrl=URL.createObjectURL(prev.blob);im.src=prevUrl;msg.textContent=st.view_ready?'预览就绪，拉清晰图…':'预览就绪，云端仍在准备清晰图…';
+  StudioCache.put(clean,prev.blob,'thumb').catch(()=>{});
+  for(let i=0;i<60&&!(st=await jget('/api/lb/status?url='+encodeURIComponent(clean))).view_ready&&my===viewSeq;i++){await new Promise(r=>setTimeout(r,200))}
+  if(my!==viewSeq||showing!==clean)return;
+  const viewQ='/api/lb/file?kind=view&url='+encodeURIComponent(clean);
+  const view=await pullChunks(viewQ,async(off,tot,retry,t)=>{if(showing!==clean||my!==viewSeq)return;msg.textContent=retry?('清晰图分片重试 '+t+'/6…'):((st.offset>0?'云端续传 ':'清晰图 ')+pct(off,tot)+'%');if(!retry)ack(clean,off,tot)},clean,'view');
+  if(my!==viewSeq||showing!==clean)return;
+  const viewUrl=URL.createObjectURL(view.blob);im.src=viewUrl;msg.textContent='';
+  await ack(clean,view.offset,view.total);
+  StudioCache.put(clean,view.blob,'view').catch(()=>{});
+  const old=mem.get(clean);if(old&&old.viewUrl&&old.viewUrl!==viewUrl)try{URL.revokeObjectURL(old.viewUrl)}catch(e){}
+  if(old&&old.prevUrl&&old.prevUrl!==prevUrl)try{URL.revokeObjectURL(old.prevUrl)}catch(e){}
+  mem.set(clean,{prevUrl,viewUrl});
+  if(mem.size>30){const k=mem.keys().next().value;if(k!==clean){const e=mem.get(k);mem.delete(k);if(e){try{URL.revokeObjectURL(e.viewUrl)}catch(x){}try{URL.revokeObjectURL(e.prevUrl)}catch(x){}}}}
+}catch(err){if(showing===clean&&my===viewSeq)msg.textContent='大图没加载出来（公网不稳），关掉再点会从断点继续';StudioCache.log&&StudioCache.log('lb-fail',{msg:String(err&&err.message||err)})}
+};
+
+})();
+</script>
+
+
+<style id="studioTabsStyle">#studioTabs{position:fixed;z-index:1000;top:0;left:0;right:0;display:flex;justify-content:center;gap:4px;padding:8px max(8px,env(safe-area-inset-right));padding-top:max(8px,env(safe-area-inset-top));background:#141816;border-bottom:1px solid #46564b}#studioTabs button{flex:1;max-width:180px;min-height:48px;padding:8px 4px;font-size:16px;white-space:nowrap}#studioTabs button[aria-selected=true]{background:#9dccad;color:#132019;font-weight:700}.studioPane[hidden]{display:none!important}main{padding-top:88px}.studioPane>.paneTitle{font-size:21px;margin:8px 0 16px}.studioPane>.layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.studioPane>section{margin-top:16px!important}.studioMore{margin:12px 0;padding:12px;border:1px solid #46564b;border-radius:10px}.studioMore>summary,summary{cursor:pointer;min-height:44px;padding:8px 0;font-weight:600}.studioMore[open]>summary{margin-bottom:10px}#spBar>.studioMore{flex-basis:100%}#spBar>.studioMore button{margin:4px}.row{flex-wrap:wrap}button,select,input:not([type=checkbox]):not([type=range]):not([type=file]){min-height:46px}button{touch-action:manipulation}input[type=checkbox]{min-width:22px;min-height:22px}#linkDownloadJobs button{min-height:46px!important;font-size:15px!important;padding:10px 14px!important}#materialShortcuts{margin-bottom:16px}.studioPane a{display:inline-block;min-height:44px;padding:8px 2px}.studioPane input,.studioPane textarea{max-width:100%}header{margin:0 0 14px}header h1{font-size:20px}header small,header .tag{display:none}#secGen>h2{display:none}@media(max-width:760px){main{padding:82px 12px 24px}.studioPane>.layout{grid-template-columns:minmax(0,1fr)}section{padding:16px}.preview{min-height:220px}.row>button{flex-grow:1}.studioPane{min-width:0}#description{min-height:120px}#studioTabs{gap:3px}#studioTabs button{font-size:15px}.tag{display:none}#spBar select{width:100%}}
+</style>
+
+<script id="studioUxHelpers">
+(function(){
+  const toastEl=()=>document.getElementById('studioToast');
+  const bar=()=>document.getElementById('studioConfirmBar');
+  let toastTimer=null, confirmResolver=null;
+  window.studioToast=function(msg,ms){
+    const el=toastEl(); if(!el) return;
+    el.textContent=String(msg||''); el.classList.add('show');
+    clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.classList.remove('show'), ms||3200);
+  };
+  window.studioConfirm=function(msg){
+    return new Promise(resolve=>{
+      const b=bar(), t=document.getElementById('studioConfirmText');
+      if(!b||!t){ resolve(window.confirm(msg)); return; }
+      if(confirmResolver){ confirmResolver(false); }
+      confirmResolver=resolve;
+      t.textContent=String(msg||'');
+      b.classList.add('show');
+    });
+  };
+  document.addEventListener('click',e=>{
+    if(e.target&&e.target.id==='studioConfirmOk'){ const r=confirmResolver; confirmResolver=null; bar().classList.remove('show'); if(r)r(true); }
+    if(e.target&&e.target.id==='studioConfirmCancel'){ const r=confirmResolver; confirmResolver=null; bar().classList.remove('show'); if(r)r(false); }
+  });
+  window.studioVlibNewCount=0;
+  window.studioBumpVlibNew=function(n){
+    n=Number(n)||1; window.studioVlibNewCount=Math.max(0,(window.studioVlibNewCount||0)+n);
+    try{ sessionStorage.setItem('studioVlibNew', String(window.studioVlibNewCount)); }catch{}
+    window.studioPaintVlibBadge&&window.studioPaintVlibBadge();
+  };
+  window.studioClearVlibNew=function(){
+    window.studioVlibNewCount=0; try{ sessionStorage.setItem('studioVlibNew','0'); }catch{}
+    window.studioPaintVlibBadge&&window.studioPaintVlibBadge();
+  };
+  try{ window.studioVlibNewCount=Number(sessionStorage.getItem('studioVlibNew')||0)||0; }catch{}
+})();
+</script>
+<script id="studioTabsLayout">(function(){
+  'use strict';
+  const main=document.querySelector('main'), by=id=>document.getElementById(id);
+  const nav=document.createElement('nav'); nav.id='studioTabs'; nav.setAttribute('aria-label','工作台功能'); nav.setAttribute('role','tablist');
+  const names={gen:'出图',video:'视频库',material:'素材',download:'下载',train:'训练',char_anim:'动画',motion_preview:'预演',history_products:'历史成品'}, panels={}; const primaryTabs=['gen','video','download','train'];
+  for(const [key,name] of Object.entries(names)){
+    const b=document.createElement('button'); b.id='tab-'+key;b.type='button';b.textContent=name;b.setAttribute('role','tab');b.setAttribute('aria-controls','pane-'+key);b.onclick=()=>show(key);
+    if(!primaryTabs.includes(key)) b.classList.add('tabSecondary');
+    nav.append(b);
+    const p=document.createElement('div');p.id='pane-'+key;p.className='studioPane';p.setAttribute('role','tabpanel');p.setAttribute('aria-labelledby',b.id);panels[key]=p;main.append(p);
+  }
+  const moreWrap=document.createElement('div'); moreWrap.className='tabMore';
+  const moreBtn=document.createElement('button'); moreBtn.type='button'; moreBtn.className='tabMoreBtn'; moreBtn.textContent='更多'; moreBtn.setAttribute('aria-haspopup','true');
+  const moreMenu=document.createElement('div'); moreMenu.className='tabMoreMenu'; moreMenu.id='studioTabMoreMenu';
+  for(const key of Object.keys(names)){ if(primaryTabs.includes(key)) continue; const b=document.createElement('button'); b.type='button'; b.dataset.tab=key; b.textContent=names[key]; b.setAttribute('aria-label', names[key]); b.onclick=e=>{e.stopPropagation(); show(key); moreMenu.classList.remove('open'); moreBtn.setAttribute('aria-expanded','false');}; moreMenu.append(b);} 
+  moreBtn.setAttribute('aria-expanded','false');
+  moreBtn.onclick=e=>{e.preventDefault();e.stopPropagation(); const open=!moreMenu.classList.contains('open'); moreMenu.classList.toggle('open',open); moreBtn.setAttribute('aria-expanded',String(open));};
+  document.addEventListener('click',e=>{ if(!moreWrap.contains(e.target)){ moreMenu.classList.remove('open'); moreBtn.setAttribute('aria-expanded','false'); } });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ moreMenu.classList.remove('open'); moreBtn.setAttribute('aria-expanded','false'); } });
+  moreWrap.append(moreBtn, moreMenu); nav.append(moreWrap);
+  main.prepend(nav);
+  window.studioPaintVlibBadge=function(){
+    const b=by('tab-video'); if(!b) return;
+    let badge=b.querySelector('.tabBadge');
+    const n=window.studioVlibNewCount||0;
+    if(n>0){ if(!badge){badge=document.createElement('span'); badge.className='tabBadge'; b.append(badge);} badge.textContent=String(n>99?'99+':n);}
+    else if(badge) badge.remove();
+    const banner=document.getElementById('vlNewBanner');
+    if(banner){ if(n>0){ banner.textContent='新到 '+n+' 个视频（下载完成自动入库）'; banner.classList.add('show'); } else { banner.classList.remove('show'); banner.textContent=''; } }
+  };
+  window.studioPaintVlibBadge();
+  const layout=by('secGen').parentElement, oldTrain=by('fxPanel').parentElement, history=by('hiPanel').parentElement;
+  panels.gen.append(layout,history);
+  // Move whole original nodes, preserving handlers, values and progress elements.
+  const kids=[...oldTrain.children];
+  const start=id=>kids.indexOf(by(id).closest('section')===oldTrain ? direct(by(id)) : by(id));
+  function direct(n){while(n.parentElement!==oldTrain)n=n.parentElement;return n}
+  const videoStart=start('vdUpBtn'),trainStart=start('trStart'),materialStart=start('pkUpBtn');
+  kids.forEach((n,i)=>{
+    if(n.tagName==='SCRIPT')return;
+    if(n===by('linkDownloadPanel'))panels.download.append(n);
+    else if(n===by('fxPanel'))panels.material.append(n);
+    else if(i>=materialStart)panels.material.append(n);
+    else if(i>=trainStart)panels.train.append(n);
+    else if(i>=videoStart)panels.video.append(n);
+    else if(n.tagName==='H2'||n.tagName==='SMALL')n.remove();
+  });
+  oldTrain.hidden=true;
+  panels.video.prepend(by('videoLibrary'));
+  by('vlMsg').after(by('vdUpProg'),by('vdUpMsg'));
+  by('vdUpMsg').setAttribute('role','status');
+  for(const id of ['libPanel','frPanel'])panels.material.prepend(by(id));
+  const shortcuts=document.createElement('div');shortcuts.className='row';shortcuts.id='materialShortcuts';
+  for(const [text,id] of [['打开素材库','libOpen'],['打开人物碎片','frOpen'],['上传照片','pkUpBtn']]){const b=document.createElement('button');b.type='button';b.textContent=text;b.onclick=()=>by(id).click();shortcuts.append(b)}
+  panels.material.prepend(shortcuts);
+  function more(parent,nodes){const d=document.createElement('details');d.className='studioMore';const s=document.createElement('summary');s.textContent='更多设置';d.append(s);for(const n of nodes)if(n)d.append(n);parent.append(d);return d}
+  const genMore=more(by('secGen'),[by('poseBox'),by('posePoseOnly').closest('.row'),by('useLora').closest('.row')]);
+  // Prompt management keeps the picker at hand; editing actions fold away.
+  more(by('spBar'),['spSave','spOver','spRen','spDel'].map(by));
+  const matMore=more(panels.material,[by('fxPanel'),by('pkCustom').closest('.row'),by('pkEdit'),by('qaBar'),by('qaStatsBox')]);
+  more(panels.video,[by('cvShow').closest('.row'),by('cvMsg')]);
+  more(panels.train,[by('trTrig'),by('cpAuto').closest('label')]);
+  more(panels.download,[by('studioLogout')]);
+  // Keep status text; remove only static repeated helper prose.
+  for(const n of main.querySelectorAll('small,p')){
+    if(n.id||n.children.length||n.closest('script'))continue;
+    if(n.textContent.length>45)n.remove();
+  }
+  by('videoLibrary').querySelector('summary').textContent='查看和选择视频';
+  by('linkDownloadPanel').querySelector('summary').textContent='粘贴链接下载';
+  by('hiPanel').open=false;
+  for(const [key,p] of Object.entries(panels)){
+    const title=document.createElement('h2');title.className='paneTitle';title.textContent=names[key];p.prepend(title);main.append(p);
+  }
+  let current='gen';
+  function show(key){if(!panels[key])key='gen';current=key;if(key==='video'){by('videoLibrary').open=true; try{ vlLoad&&vlLoad().catch(()=>{});}catch{} window.studioClearVlibNew&&window.studioClearVlibNew();} for(const k of Object.keys(panels)){panels[k].hidden=k!==key;by('tab-'+k).setAttribute('aria-selected',String(k===key));by('tab-'+k).tabIndex=k===key?0:-1}try{sessionStorage.setItem('studioTab',key)}catch{}}
+  nav.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const ks=Object.keys(panels),i=ks.indexOf(current);const k=e.key==='Home'?ks[0]:e.key==='End'?ks.at(-1):ks[(i+(e.key==='ArrowRight'?1:ks.length-1))%ks.length];show(k);by('tab-'+k).focus()});
+  // Existing shortcuts scroll to selected controls; reveal their destination first.
+  const scroll=Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView=function(...args){const p=this.closest('.studioPane');if(p){show(p.id.slice(5));for(let n=this.parentElement;n&&n!==p;n=n.parentElement)if(n.tagName==='DETAILS')n.open=true}return scroll.apply(this,args)};
+  for(const id of ['libPanel','frPanel'])new MutationObserver(()=>{if(!by(id).hidden)show('material')}).observe(by(id),{attributes:true,attributeFilter:['hidden']});
+  try{show(sessionStorage.getItem('studioTab')||'gen')}catch{show('gen')}
+})();
+</script>
+
+<script>
+(()=>{
+const pane=document.getElementById('pane-char_anim');
+pane.insertAdjacentHTML('beforeend',`<section><p id="caPolicy">衣服与外形只跟所选角色图；驱动片只提供动作，不会保留驱动片衣服。本地 MiniMax-H3 R2V，不接任何云 API。</p><button id="caLoad">刷新素材与视频编号</button><p>从素材库按 id 选角色图（可多选，每张分别生成；仅显示编号）</p><select id="caImages" multiple size="6" style="width:100%"></select><p>从视频库选驱动视频 id</p><select id="caVideo" style="width:100%"></select><label><input type="checkbox" id="caAnti">防串味(深度)</label><p>H3 主路径：角色图 + 标准骨架动作视频。深度是可选预处理，可能降低动作识别；关闭时也不传驱动 RGB、脸或声音。首次带卡仍需验服装一致性与动作效果。</p><button id="caSubmit" class="primary">提交排队</button><p id="caMessage" role="status"></p><div id="caJobs"></div></section>`);
+const by=id=>document.getElementById(id);let stream;
+function render(jobs){by('caJobs').replaceChildren();for(const j of jobs){const row=document.createElement('div');row.textContent=j.id+' · '+j.message+' '+(j.progress==null?'':Math.round(j.progress)+'%');for(const url of j.results||[]){const a=document.createElement('a');a.href=url;a.textContent='查看成品';a.target='_blank';row.append(a)}by('caJobs').append(row)}}
+by('caLoad').onclick=async()=>{try{const d=await api('/api/char-anim/materials');by('caImages').replaceChildren();by('caVideo').replaceChildren();for(const x of d.items){const o=document.createElement('option');o.value=x.id;o.textContent=x.id;by(x.kind==='image'?'caImages':'caVideo').append(o)}by('caMessage').textContent='已加载素材编号；未读取素材内容';render((await api('/api/char-anim/jobs')).jobs);if(!stream){stream=new EventSource('/api/char-anim/events');stream.onmessage=e=>render(JSON.parse(e.data).jobs)}}catch(e){by('caMessage').textContent='加载失败，请重新登录或重试'}};
+by('caSubmit').onclick=async()=>{by('caSubmit').disabled=true;try{const d=await api('/api/char-anim/jobs',json({image_ids:[...by('caImages').selectedOptions].map(o=>o.value),video_id:by('caVideo').value,anti_bleed:by('caAnti').checked}));by('caMessage').textContent=d.message;render((await api('/api/char-anim/jobs')).jobs)}catch(e){by('caMessage').textContent=e.message||'提交失败，请检查所选编号'}finally{by('caSubmit').disabled=false}};
+})();
+</script>
+
+<style>#studioTabs{overflow:visible;justify-content:flex-start;flex-wrap:wrap}#studioTabs button{flex:1 0 72px}#pane-motion_preview video,#pane-history_products video{width:100%;max-width:420px;display:block;margin:8px 0}#mpImages label,#mpVideos label,#mpPreviews label{display:block;overflow-wrap:anywhere}.mpCard{border:1px solid #46564b;border-radius:10px;padding:12px;margin:12px 0}</style>
+<script id="motionPreviewUI">
+(()=>{
+const pane=document.getElementById('pane-motion_preview');
+const histPane=document.getElementById('pane-history_products');
+if(histPane){histPane.insertAdjacentHTML('beforeend',`<section>
+<p>出片完成后的成片集中在这里，与「预演」里的深度/白模库分开。</p>
+<button id="hpRefresh" type="button">刷新成品</button>
+<details id="mpHistoryBox" class="mpCollapse" open>
+<summary>历史成品库 · <span id="mpHistorySum">展开/收起</span></summary>
+<div id="mpHistory"></div>
+</details>
+</section>`);}
+pane.insertAdjacentHTML('beforeend',`<section>
+<p>衣服与长相只认人物图；参考视频只提供动作。默认开启防串味。</p>
+<h3>1 · 开始动作预演</h3>
+<button id="mpRefresh" type="button">刷新素材与任务</button>
+<details id="mpVideosBox" class="mpCollapse">
+<summary>勾选参考视频（可多选） · <span id="mpVideosSum">展开/收起</span></summary>
+<div id="mpVideos"></div>
+</details>
+<label>或上传参考视频（最多 20 MB） <input id="mpUpload" type="file" accept="video/mp4,video/webm,video/quicktime"></label>
+<label><input id="mpWhite" type="checkbox" checked>白模</label>
+<label><input id="mpDepth" type="checkbox" checked>深度空间</label>
+<button id="mpStart" type="button" class="primary">开始</button>
+<p id="mpMessage" role="status" aria-live="polite">真实预演需要带卡与动作引擎就绪，排队期间不会生成假动作。</p><div id="mpPerVideoStatus" aria-live="polite"></div>
+<details id="mpPreviewsBox" class="mpCollapse" open>
+<summary>2 · 检查并勾选通过的预览 · <span id="mpPreviewsSum">展开/收起</span></summary>
+<div id="mpPreviews"></div>
+</details>
+<details id="mpImagesBox" class="mpCollapse">
+<summary>3 · 勾选人物图 · <span id="mpImagesSum">展开/收起</span></summary>
+<div id="mpImages"></div>
+</details>
+<label><input id="mpAnti" type="checkbox" checked>防串味（默认开启）</label>
+<h3>4 · 一键出片</h3><button id="mpGenerate" type="button" class="primary">开始出片</button>
+<p>所选动作控制视频 × 人物图 → MiniMax H3 Ref2VA。引擎安装中时保留排队，不调用云端 API。</p>
+<div id="mpGenerations" role="status"></div><details id="mpDepthLibBox" class="mpCollapse" open><summary>深度/白模库（可勾选作出片动作） · <span id="mpDepthLibSum">展开/收起</span></summary><div id="mpDepthLib"></div></details><p class="muted">出片成品不在这里，请打开顶部「历史成品」查看。</p></section>`);
+const by=id=>document.getElementById(id),selected=new Set(),depthIds=new Set();let stream;let materialItems=[];let materialsLoaded=false;
+function thumbnail(url,text){const box=document.createElement('div');box.className='mpThumb';const fallback=document.createElement('span');fallback.textContent=text;box.append(fallback);if(url){const img=document.createElement('img');img.alt=text;img.loading='lazy';img.src=url;img.onload=()=>fallback.hidden=true;img.onerror=()=>img.remove();box.prepend(img)}return box}
+const call=async(url,options={})=>{const r=await fetch(url,{credentials:'same-origin',...options});const t=await r.text();let d;try{d=JSON.parse(t)}catch{throw Error(r.status===403||r.status===401?'需要重新登录后再试':'服务暂时没响应（HTTP '+r.status+'），请稍后再点一次')}if(!r.ok)throw Error(d.error||'请求失败，请重新登录或重试');return d};
+const post=a=>({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(a)});
+function render(d){
+ const playingPrev=[...by('mpPreviews').querySelectorAll('video')].some(v=>!v.paused&&!v.ended);
+ const playingHist=[...(by('mpHistory')?by('mpHistory').querySelectorAll('video'):[])].some(v=>!v.paused&&!v.ended);
+ const playingDepth=[...(by('mpDepthLib')?by('mpDepthLib').querySelectorAll('video'):[])].some(v=>!v.paused&&!v.ended);
+ const previewSig=JSON.stringify((d.jobs||[]).map(j=>({id:j.id,state:j.state,results:(j.results||[]).map(x=>({id:x.id,kind:x.kind,url:x.url}))})));
+ if(by('mpPreviews').dataset.signature!==previewSig&&!playingPrev){
+  by('mpPreviews').dataset.signature=previewSig;by('mpPreviews').replaceChildren();const available=new Set();
+  for(const j of (d.jobs||[]).filter(j=>j.state!=='done')){const card=document.createElement('div');card.className='mpCard';const title=document.createElement('p');title.textContent=j.id+' \u00b7 '+j.message;card.append(title);
+   for(const x of j.results||[]){available.add(x.id);const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.value=x.id;check.checked=selected.has(x.id);check.onchange=()=>{check.checked?selected.add(x.id):selected.delete(x.id);syncDepthChecks()};label.append(check,document.createTextNode('通过 \u00b7 '+(x.kind==='white'?'白模':'深度空间')+' \u00b7 '+x.id));const video=document.createElement('video');video.controls=true;video.preload='none';video.src=x.url;card.append(label,video)}
+   by('mpPreviews').append(card)
+  }
+  for(const id of [...selected])if(!available.has(id)&&!depthIds.has(id))selected.delete(id);
+  const ps=by('mpPreviewsSum');if(ps)ps.textContent=(selected.size?('已勾 '+selected.size+' \u00b7 '):'')+by('mpPreviews').querySelectorAll('.mpCard').length+' 条 \u00b7 点此展开或收起';
+ }
+ depthIds.clear();
+ const depthItems=[];
+ for(const j of d.jobs||[]){
+  if(j.state!=='done')continue;
+  for(const x of j.results||[]){
+   if(!x||!x.url)continue;
+   depthItems.push({id:x.id,kind:x.kind||'',url:x.url,job:j.id,created:j.created_at||''});
+   depthIds.add(x.id);
+  }
+ }
+ const depthSig=JSON.stringify(depthItems.map(x=>({id:x.id,kind:x.kind,url:x.url})));
+ const depthBox=by('mpDepthLib');
+ if(depthBox&&depthBox.dataset.signature!==depthSig&&!playingDepth){
+  depthBox.dataset.signature=depthSig;depthBox.replaceChildren();
+  if(!depthItems.length){depthBox.textContent='还没有深度/白模成品（预演通过后会出现在这里）'}
+  else{
+   for(const x of depthItems){
+    const row=document.createElement('div');row.className='mpCard';row.style.margin='8px 0';
+    const label=document.createElement('label'),check=document.createElement('input');
+    check.type='checkbox';check.value=x.id;check.dataset.depthLib='1';check.checked=selected.has(x.id);
+    check.onchange=()=>{if(check.checked)selected.add(x.id);else selected.delete(x.id);updateDepthSum()};
+    const kindZh=x.kind==='white'?'白模':'深度';
+    label.append(check,document.createTextNode(' '+kindZh+' \u00b7 '+x.id.slice(0,8)+(x.created?(' \u00b7 '+String(x.created).replace('T',' ').slice(0,19)):'')));
+    const video=document.createElement('video');video.controls=true;video.preload='none';video.src=x.url;
+    const open=document.createElement('a');open.href=x.url;open.target='_blank';open.rel='noopener';open.textContent='新窗口打开';open.style.marginLeft='10px';
+    const delBtn=document.createElement('button');delBtn.type='button';delBtn.textContent='删除';delBtn.dataset.depthDel=x.job;delBtn.style.cssText='margin-left:10px;color:#efa79b;font-size:13px';
+    delBtn.onclick=async e=>{e.preventDefault();e.stopPropagation();if(!(await studioConfirm('确定删除这条深度/白模预演？不可恢复')))return;delBtn.disabled=true;try{await call('/api/motion-preview/jobs/'+encodeURIComponent(x.job),{method:'DELETE'});selected.delete(x.id);depthIds.delete(x.id);if(depthBox)depthBox.dataset.signature='';const prev=by('mpPreviews');if(prev)prev.dataset.signature='';studioToast('已删除');render(await call('/api/motion-preview/jobs'))}catch(er){alert(er.message||er);delBtn.disabled=false}};
+    row.append(label,open,delBtn,video);depthBox.append(row);
+   }
+  }
+  updateDepthSum();
+ }
+ function updateDepthSum(){
+  const ds=by('mpDepthLibSum');if(!ds)return;
+  const n=depthItems.length;const c=[...selected].filter(id=>depthIds.has(id)).length;
+  ds.textContent=(c?('已勾 '+c+' \u00b7 '):'')+n+' 条 \u00b7 点此展开或收起';
+ }
+ function syncDepthChecks(){
+  const box=by('mpDepthLib');if(!box)return;
+  box.querySelectorAll('input[data-depth-lib]').forEach(ck=>{ck.checked=selected.has(ck.value)});
+  updateDepthSum();
+ }
+ const gens=d.generation_jobs||[];
+ const genProgSig=JSON.stringify(gens.map(j=>({id:j.id,state:j.state,message:j.message,progress:j.progress,anti:!!j.anti_bleed})));
+ const genDoneSig=JSON.stringify(gens.filter(j=>j.state==='done').map(j=>({id:j.id,results:j.results||[]})));
+ const genBox=by('mpGenerations');
+ if(genBox&&genBox.dataset.progSig!==genProgSig){
+  genBox.dataset.progSig=genProgSig;
+  const have=new Map([...genBox.querySelectorAll('[data-gen-id]')].map(el=>[el.dataset.genId,el]));
+  const keep=new Set();
+  for(const j of gens){
+   keep.add(j.id);
+   let row=have.get(j.id);
+   if(!row){row=document.createElement('div');row.dataset.genId=j.id;row.style.margin='6px 0';
+    const tp=document.createElement('p');tp.className='mpGenMsg';tp.style.margin='2px 0';row.append(tp);
+    const bar=document.createElement('progress');bar.max=100;bar.className='mpGenBar';bar.style.width='100%';row.append(bar);
+    const links=document.createElement('div');links.className='mpGenLinks';row.append(links);
+    genBox.append(row)}
+   const tp=row.querySelector('.mpGenMsg');const bar=row.querySelector('.mpGenBar');
+   if(tp)tp.textContent=j.id.slice(0,8)+' \u00b7 '+(j.message||'')+' \u00b7 防串味\uff1a'+(j.anti_bleed?'开':'关');
+   const pc=Math.max(0,Math.min(100,Number(j.progress)||0));
+   if(bar){if(j.state==='failed'){bar.style.display='none'}else{bar.max=100;bar.value=pc;bar.style.display=j.state==='done'?'none':'block'}}
+  }
+  for(const [id,el] of have){if(!keep.has(id)){const vids=el.querySelectorAll('video');if([...vids].some(v=>!v.paused&&!v.ended))continue;el.remove()}}
+ }
+ const genPlaying=[...genBox.querySelectorAll('video')].some(v=>!v.paused&&!v.ended);
+ if(genBox&&genBox.dataset.doneSig!==genDoneSig&&!genPlaying){
+  genBox.dataset.doneSig=genDoneSig;
+  for(const j of gens){
+   const row=genBox.querySelector('[data-gen-id="'+j.id+'"]');if(!row)continue;
+   const links=row.querySelector('.mpGenLinks');if(!links)continue;
+   links.replaceChildren();
+   if(j.state!=='done')continue;
+   for(const u of (j.results||[])){
+    const a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener';a.textContent='打开成片 '+u.split('/').pop();a.style.marginRight='10px';links.append(a);
+   }
+  }
+ }
+ const histItems=gens.filter(j=>j.state==='done').map(j=>({id:j.id,results:j.results||[],created:j.created_at||'',message:j.message||''}));
+ const histSig=JSON.stringify(histItems.map(x=>({id:x.id,results:x.results})));
+ const hist=by('mpHistory');
+ if(hist&&hist.dataset.signature!==histSig&&!playingHist){
+  hist.dataset.signature=histSig;hist.replaceChildren();
+  if(!histItems.length){hist.textContent='还没有出片成品。出片完成后会出现在这里。'}
+  else{
+   for(const j of histItems){
+    const card=document.createElement('div');card.className='mpCard';
+    const title=document.createElement('p');title.style.margin='2px 0';
+    title.textContent='成品 \u00b7 '+j.id.slice(0,8)+(j.created?(' \u00b7 '+String(j.created).replace('T',' ').slice(0,19)):'')+' \u00b7 '+(j.message||'已完成');
+    const delBtn=document.createElement('button');delBtn.type='button';delBtn.textContent='删除';delBtn.dataset.histDel=j.id;delBtn.style.cssText='margin-left:10px;color:#efa79b;font-size:13px';delBtn.onclick=async e=>{e.preventDefault();e.stopPropagation();if(!(await studioConfirm('确定删除这条成品？不可恢复')))return;delBtn.disabled=true;try{await call('/api/motion-preview/generation-jobs/'+encodeURIComponent(j.id),{method:'DELETE'});if(hist)hist.dataset.signature='';studioToast('已删除');render(await call('/api/motion-preview/jobs'))}catch(er){alert(er.message||er);delBtn.disabled=false}};
+    const head=document.createElement('div');head.style.cssText='display:flex;align-items:center;flex-wrap:wrap;gap:6px';head.append(title,delBtn);card.append(head);
+    for(const u of j.results){
+     const wrap=document.createElement('div');wrap.style.margin='6px 0';
+     const a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener';a.textContent='新窗口打开 '+u.split('/').pop();
+     const video=document.createElement('video');video.controls=true;video.preload='none';video.src=u;video.style.width='100%';video.style.maxWidth='420px';
+     wrap.append(a,video);card.append(wrap);
+    }
+    hist.append(card);
+   }
+  }
+  const hs=by('mpHistorySum');if(hs)hs.textContent=histItems.length+' 条成品 \u00b7 点此展开或收起';
+ }
+ const statusSig=JSON.stringify({jobs:(d.jobs||[]).map(j=>({id:j.id,state:j.state,message:j.message,video_id:j.video_id}))});
+ const st=by('mpPerVideoStatus');
+ if(st&&st.dataset.signature===statusSig)return;
+ if(st)st.dataset.signature=statusSig;
+ if(st){ st.replaceChildren();
+  const labelOf=id=>{const n=[...by('mpVideos').querySelectorAll('label')].find(l=>l.querySelector('input')?.value===id); return n?n.textContent.trim():('参考视频 '+id.slice(0,8));};
+  const stateText=s=>({queued:'排队中',running:'生成中',done:'成功',failed:'失败',error:'失败',engine_pending:'排队中'}[s]||s||'排队中');
+  const stateClass=s=>s==='done'?'ok':(s==='failed'||s==='error'?'bad':'wait');
+  const act=(d.jobs||[]).filter(j=>!['done','failed','error','cancelled'].includes(j.state));
+  for(const j of act){
+   const row=document.createElement('div'); row.className='mpJobRow';
+   const tp=document.createElement('span'); tp.className=stateClass(j.state); tp.textContent=(j.video_id?labelOf(j.video_id):j.id.slice(0,8))+' \u00b7 '+stateText(j.state)+' \u00b7 '+(j.message||'');
+   row.append(tp);
+   if(j.state==='failed'||j.state==='error'){ const rb=document.createElement('button'); rb.type='button'; rb.textContent='重试'; rb.onclick=()=>action(rb,async()=>{ if(!j.video_id) throw Error('无法重试：缺少参考视频编号'); const white=by('mpWhite').checked,depth=by('mpDepth').checked; const d2=await call('/api/motion-preview/jobs',post({video_id:j.video_id,make_white:white,make_depth:depth})); by('mpMessage').textContent=d2.message||'已重新排队'; render(await call('/api/motion-preview/jobs')); }); row.append(rb);} 
+   st.append(row);
+  }
+  if(!act.length) st.textContent='';
+ }
+}
+async function refresh(preferChecked){
+ const d=await call('/api/motion-preview/materials');
+ const videos=new Set(preferChecked||[...by('mpVideos').querySelectorAll('input:checked')].map(x=>x.value));
+ const images=new Set([...by('mpImages').querySelectorAll('input:checked')].map(x=>x.value));
+ by('mpVideos').replaceChildren();by('mpImages').replaceChildren();
+ materialItems=d.items;let vi=0,ii=0;
+ for(const x of d.items){
+  if(x.kind==='video'){
+   const label=document.createElement('label'),check=document.createElement('input');
+   label.className='mpImageCard';check.type='checkbox';check.value=x.id;check.checked=videos.has(x.id);
+   label.append(thumbnail(x.cover_url,'封面暂不可用'),check,document.createTextNode(' 参考视频 '+(++vi)));
+   by('mpVideos').append(label);
+  }else{
+   const label=document.createElement('label'),check=document.createElement('input');
+   label.className='mpImageCard';check.type='checkbox';check.value=x.id;check.checked=images.has(x.id);
+   const histTag=x.from_history?('{S_HIST_REF} '):('{S_PERSON} ');label.append(thumbnail(x.thumb_url,histTag+'暂不可用'),check,document.createTextNode(' '+histTag+(++ii)));
+   by('mpImages').append(label);
+  }
+ }
+ by('mpMessage').textContent='已加载 '+vi+' 个参考视频、'+ii+' 张人物图；点小图即可勾选';
+ const vs=by('mpVideosSum'),is=by('mpImagesSum'),vb=by('mpVideosBox'),ib=by('mpImagesBox');
+ const vc=[...by('mpVideos').querySelectorAll('input:checked')].length,ic=[...by('mpImages').querySelectorAll('input:checked')].length;
+ if(vs)vs.textContent=(vc?('已勾 '+vc+' / '):'')+vi+' 个 · 点此展开或收起';
+ if(is)is.textContent=(ic?('已勾 '+ic+' / '):'')+ii+' 张 · 点此展开或收起';
+ if(vb&&!vb.dataset.userToggled){vb.open=vi<=6;vb.dataset.inited='1'}
+ if(ib&&!ib.dataset.userToggled){ib.open=ii<=8;ib.dataset.inited='1'}
+
+ materialsLoaded=true;
+ render(await call('/api/motion-preview/jobs'));
+ if(!stream){stream=new EventSource('/api/motion-preview/events');stream.onmessage=e=>{try{render(JSON.parse(e.data))}catch{}};stream.onerror=()=>{/* EventSource auto-reconnects; do not flicker UI */}}
+}
+async function action(button,fn){button.disabled=true;try{await fn()}catch(e){by('mpMessage').textContent=e.message}finally{button.disabled=false}}
+['mpVideosBox','mpImagesBox','mpPreviewsBox','mpDepthLibBox','mpHistoryBox'].forEach(id=>{const el=by(id);if(el)el.addEventListener('toggle',()=>{if(el.dataset.inited)el.dataset.userToggled='1'})});
+by('mpRefresh').onclick=()=>action(by('mpRefresh'),()=>refresh());
+by('mpUpload').onchange=()=>action(by('mpStart'),async()=>{const f=by('mpUpload').files[0];if(!f)return;if(f.size>20*1024*1024)throw Error('上传上限 20 MB，请选择视频库中的视频');const d=await call('/api/motion-preview/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});by('mpUpload').value='';const keep=[...by('mpVideos').querySelectorAll('input:checked')].map(x=>x.value);if(!keep.includes(d.id))keep.push(d.id);await refresh(keep);by('mpMessage').textContent='参考视频已上传并勾选'});
+by('mpStart').onclick=()=>action(by('mpStart'),async()=>{
+ const ids=[...by('mpVideos').querySelectorAll('input:checked')].map(x=>x.value);
+ if(!ids.length)throw Error('请先勾选至少一个参考视频');
+ const white=by('mpWhite').checked,depth=by('mpDepth').checked;
+ const msgs=[];
+ for(const video_id of ids){
+  const d=await call('/api/motion-preview/jobs',post({video_id,make_white:white,make_depth:depth}));
+  msgs.push(d.message||'已提交');
+ }
+ by('mpMessage').textContent=ids.length===1?msgs[0]:('已为 '+ids.length+' 个参考视频分别提交：'+msgs.join('；'));
+ render(await call('/api/motion-preview/jobs'));
+});
+by('mpGenerate').onclick=()=>action(by('mpGenerate'),async()=>{const d=await call('/api/motion-preview/generate',post({image_ids:[...by('mpImages').querySelectorAll('input:checked')].map(x=>x.value),motion_ids:[...selected],anti_bleed:by('mpAnti').checked}));by('mpMessage').textContent=d.message;render(await call('/api/motion-preview/jobs'))});
+document.getElementById('tab-motion_preview').addEventListener('click',()=>action(by('mpRefresh'),async()=>{if(materialsLoaded){render(await call('/api/motion-preview/jobs'));return}await refresh()}));
+const loadHist=()=>action(by('hpRefresh')||by('mpRefresh'),async()=>{if(materialsLoaded){render(await call('/api/motion-preview/jobs'));return}await refresh()});
+if(document.getElementById('tab-history_products'))document.getElementById('tab-history_products').addEventListener('click',loadHist);
+if(by('hpRefresh'))by('hpRefresh').onclick=loadHist;
+if(!pane.hidden)action(by('mpRefresh'),()=>refresh());
+})();
+</script>
+
+<style>
+#mpImages,#mpVideos{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px}
+#mpImages .mpImageCard,#mpVideos .mpImageCard{display:block;border:2px solid #46564b;border-radius:12px;padding:8px;cursor:pointer;min-width:0}
+#mpImages .mpImageCard:has(input:checked),#mpVideos .mpImageCard:has(input:checked){border-color:#75ce98;background:#223b2c}
+#mpImages input,#mpVideos input{width:22px;height:22px;vertical-align:middle}
+.mpThumb{position:relative;display:flex;align-items:center;justify-content:center;background:#202924;border-radius:8px;overflow:hidden;aspect-ratio:1;margin-bottom:8px}
+.mpThumb img{width:100%;height:100%;object-fit:contain}.mpThumb span{padding:8px;text-align:center;color:#b7c4bb}
+#mpVideos .mpThumb{aspect-ratio:16/9}
+.mpCollapse{border:1px solid #46564b;border-radius:10px;padding:8px 12px;margin:10px 0;background:#1a2420}
+.mpCollapse>summary{cursor:pointer;font-weight:600;list-style:none;user-select:none;padding:6px 0}
+.mpCollapse>summary::-webkit-details-marker{display:none}
+.mpCollapse>summary::before{content:"▸ ";color:#75ce98}
+.mpCollapse[open]>summary::before{content:"▾ "}
+.mpCollapse #mpVideos,.mpCollapse #mpImages,.mpCollapse #mpPreviews{margin-top:10px;max-height:min(52vh,520px);overflow:auto}
+</style>

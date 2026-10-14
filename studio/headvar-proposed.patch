@@ -1,0 +1,44 @@
+--- recipes_cloud.py	2026-10-10 20:19:57.182396601 +0800
++++ /tmp/rc.py	2026-10-10 20:20:16.778554016 +0800
+@@ -60,6 +60,20 @@
+     ('expression', '面部特写', '正面平视', '轻微惊讶', '眉毛微抬，嘴巴微张', 'face'),
+ )
+ 
++# 【待批准】头部/特写镜头按轮次换朝向和表情，避免 EXTRA80 循环 4 遍完全重复
++HEAD_CYCLE = (
++    ("正面平视", "平静闭嘴", "头摆正"),
++    ("向画面左转30度并微微低头约10度", "闭嘴浅笑，嘴角轻轻上扬", "头微低，视线看向镜头"),
++    ("向画面右转30度并微微抬头约10度", "专注闭嘴，眼神坚定", "下巴微抬"),
++    ("头部向画面左侧轻歪约10度", "放松自然，嘴唇轻闭", "头轻歪，双肩放松"),
++)
++FACE_CYCLE = (
++    None,
++    "开心露齿笑，眼睛弯起，眉毛放松舒展。",
++    "惊讶，眼睛睁大，眉毛轻轻上抬，嘴巴张开成小圆形。",
++    "生气，眼神凌厉，双唇紧闭，下巴微收。",
++)
++
+ 
+ def _upper_outfit(outfit):
+     lower = ('腰', '裤', '裙', '鞋', '靴', '袜', '腿', '脚')
+@@ -120,7 +134,7 @@
+         prompt = ('专业摄影棚人像，纯浅灰背景，柔和均匀的摄影灯光。摄像机正对面部，正面平视。'
+                   '脸部近景特写，完整的头顶、双耳和下巴全部入画，完整面部无遮挡，画面下边缘在颈部与肩膀。'
+                   + FACE_ACTION[n] + '画面里只出现这个人的头部、颈部及肩膀和空白灰背景，人物面对相机。'
+-                  '除第一张灰底画布外，其余每一张参考图都是同一个人，只用来识别脸型、五官、发型和服装，不要照搬任何一张参考图的姿势、头部朝向和表情。保留真实自然的皮肤、皱纹、发丝和清楚的眼睛嘴唇。')
++                  '除第一张灰底画布外，其余每一张参考图都是同一个人，只用来识别脸型、五官、发型和服装，不要照搬任何一张参考图的姿势、头部朝向和表情。保留真实自然的皮肤质感、发丝和清楚的眼睛嘴唇。')
+     if n == 7:
+         visible = _upper_outfit(outfit)
+         prompt = ('近距离腰部以上半身人像，画面底边切在腰带处，头和上半身充满画面。'
+@@ -154,6 +168,11 @@
+         for category, framing, view, expression, action, pose in EXTRA80:
+             if len(rows) >= 80:
+                 break
++            c = (n - 21) // len(EXTRA80)
++            if c and category == "head" and pose == "head":
++                view, expression, action = HEAD_CYCLE[c % len(HEAD_CYCLE)]
++            if c and category == "expression" and FACE_CYCLE[c % len(FACE_CYCLE)]:
++                expression = action = FACE_CYCLE[c % len(FACE_CYCLE)]
+             rows.append({
+                 'id': f'advanced_{n:03d}',
+                 'label': f'{framing}·{action}' if len(action) < 18 else f'{framing}·{action[:16]}…',

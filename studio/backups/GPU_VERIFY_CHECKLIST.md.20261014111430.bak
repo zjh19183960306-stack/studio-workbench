@@ -1,0 +1,39 @@
+# GPU verification checklist (after 挂卡)
+
+Do NOT run until PRO 6000 has GPU again (`nvidia-smi -L` shows device).
+
+1. Confirm weights: Fun ControlNet patch + int8 VAE present; `weights_ok` True in motion_h3_worker.
+2. Optional: wait for TE `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` (~14.6GB) to finish; then point r2v_api.json CLIPLoader to it and update verified.json `te`.
+3. Restart ComfyUI (autostart/`watch_comfy.sh` should do this on GPU boot).
+4. Run ONE H3 job: video `55052b2c225affd8a12cac52`, VDA depth job `f5d27ba53fe1e7b968552621d6f3c541`, char pack `20261014-062852_f390e8` (3 images, one character, not per_image).
+5. Verify metadata (numbers only):
+   - native ~768x1344 (or aspect-matched 1MP), delivery ~1080x1920
+   - fps 24, frames on 17k+5, duration ≤ source
+   - original audio muxed on delivery
+   - engine uses Fun ControlNet (not depth as ref_video)
+   - render_meta in job JSON
+   - multi-ref → steps 25 (unless H3_STEPS set); single-ref → 20
+6. Cancel button smoke: queue then cancel mid-run.
+7. Deferred low-risk: Sage/cu130/bf16 DiT — only after stable Fun ControlNet outtakes. **Do not** enable Sage on int8-convrot checkpoints (docs: alignment crash / quality issues); needs bf16 + Model Attention Backend / kitchen.
+8. Multi-ref prompt tags: each image must appear as its own `<Picture i>` with an assigned job (face / turnaround / full-body); fixed 2026-10-14 07:12 tags + 07:45 role assignment. Verify identity lock with 3-image char pack on GPU.
+9. Optional A/B (docs wiki): for reference-heavy shots try `H3_SCHEDULER=beta` or `normal` vs default `simple`; keep `simple` unless GPU A/B shows better identity.
+11. Fun CN `end_percent` / `H3_CN_END`: **depth path default 0.75** (2026-10-14 10:08; FunControl author + RunComfy/T8 Advanced: release before late texture; official node baseline is still 1.0 for non-depth). Override with `H3_CN_END=0.6` (more texture) or `1.0` (harder motion lock). Confirm `render_meta.cn_end` / `cn_start` / `cn_strength` / `steps` / `scheduler` / `n_refs` / `sparse` after a GPU job.
+12. Future path (not this pass): Wan Animate 2 local motion transfer — docs.comfy.org/tutorials/video/wan/wan-animate-2 (ref image + drive video, no pose extract) as parallel engine after H3 Fun CN is GPU-proven.
+13. Long-video concat (2026-10-14 08:44): xfade output duration is validated; on failure, hard-concat **trims leading overlap** from segment 2+ so seams do not replay overlapped motion. GPU smoke: drive video >15s, confirm delivery length ≈ source (not +overlap*(segs-1)).
+14. Optional sparse attention (default **OFF**): set `H3_SPARSE=1` to insert `BlockSparseAttention` (sol-attn) between UNET and Fun CN. Needs ComfyUI ≥0.35 + comfy-kitchen sol_attn. Our ON defaults (docs quality tip): start **0.4** / end **0.9** / tau 1.3 / sink exact_kv_and_rows (official node defaults remain 0.2/1.0). A/B vs dense on a 15s clip for speed/quality before leaving on.
+15. Do **not** enable Lightning turbo LoRA for reference/Fun CN identity shots (docs: 4 steps starve reference tokens). Preview-only if ever wired.
+16. Future weights: Fun ControlNet Union **2.0** (10 control blocks, +Scribble/Layout/Gray) — separate download; keep v1 int8 until GPU-proven then consider upgrade.
+
+17. Duration clamp (2026-10-14 09:13): native length forced to official 5–15s window on 17k+5 @24fps — **min 124** (~5.17s), **max 345** (~14.375s). Old ceil-only path could emit **362** (~15.08s) for a 15s driver (over official cap) or **<<124** for short drivers. Short controls use longer last-frame `tpad` so `-frames:v` always reaches n. GPU smoke: 3s / 15s / 16s drivers; confirm `render_meta` length ∈ {124…345} and delivery ≤15s.
+18. Prompt structure (deferred): official Context-IR (`subject_definitions` / `retention_analysis` / shot timeline) still richer than our role sentences; consider after GPU identity A/B on current multi-ref prompts.
+19. Wan Animate 2 parallel engine (deferred): docs.comfy.org/tutorials/video/wan/wan-animate-2 — ref image + raw drive video, no pose extract; INT8 + optional distill LoRA; 81-frame windows. Only after H3 Fun CN GPU-proven.
+
+20. Short-tail segment + delivery trim (2026-10-14 09:40): after min-frame clamp, leftover <~5.17s no longer becomes a padded stub. Final window slides back (`segs_meta.json`); large overlaps force hard-concat with actual lead trim (skip tiny xfade). After stitch, delivery trimmed to control/source duration when overshoot >0.12s. GPU smoke: 3s / 16s / 30s drivers; delivery ≈ source (±0.2s), no duplicated tail motion.
+21. Official Fun CN samples often use 40 steps (VideoX-Fun); ComfyUI docs keep 20 and raise to 25 for reference drift (high-frequency detail can go toward ~50). Keep 20/25 defaults; optional `H3_STEPS=40` A/B after GPU identity baseline — do not change default without A/B.
+
+22. Depth-aware CN end (2026-10-14 10:08): when control `kind==depth` (our DEPTH_PREFERRED path), default `end_percent=0.75` unless `H3_CN_END` set; non-depth stays 1.0. Community note: depth alone can drift subject scale/distance — if GPU shows grow/walk-in, try `H3_CN_STRENGTH=0.7` or `H3_CN_END=0.6`, or add pose later. GPU smoke: same char pack, compare flatness/identity vs old end=1.0.
+23. Sparse ON quality window (2026-10-14 10:08): when `H3_SPARSE=1`, default start/end **0.4/0.9** (docs tip keep open/close dense). Still default OFF. A/B vs dense on 15s clip before leaving on.
+
+
+24. render_meta cn_end sync (2026-10-14 10:45): `render_meta.cn_end` previously always defaulted to **0.75** even when graph used **1.0** for non-depth. Now both use `resolve_cn_end(kind)` (depth→0.75, else→1.0; `H3_CN_END` wins). Also records `control_kind`. GPU smoke: after a depth job and a non-depth job, confirm meta `cn_end` matches the Apply node end_percent actually submitted.
+25. Failed-queue policy (doc only): with no GPU, leftover `failed`/`queued` job JSONs under `motion_generate` are left in place (deploy aborts if any files present). Operator may delete failed JSON after reading error code only — never open media/prompt files. Do not auto-purge from worker.

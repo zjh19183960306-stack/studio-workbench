@@ -1,0 +1,21 @@
+# GPU verification checklist (after 挂卡)
+
+Do NOT run until PRO 6000 has GPU again (`nvidia-smi -L` shows device).
+
+1. Confirm weights: Fun ControlNet patch + int8 VAE present; `weights_ok` True in motion_h3_worker.
+2. Optional: wait for TE `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` (~14.6GB) to finish; then point r2v_api.json CLIPLoader to it and update verified.json `te`.
+3. Restart ComfyUI (autostart/`watch_comfy.sh` should do this on GPU boot).
+4. Run ONE H3 job: video `55052b2c225affd8a12cac52`, VDA depth job `f5d27ba53fe1e7b968552621d6f3c541`, char pack `20261014-062852_f390e8` (3 images, one character, not per_image).
+5. Verify metadata (numbers only):
+   - native ~768x1344 (or aspect-matched 1MP), delivery ~1080x1920
+   - fps 24, frames on 17k+5, duration ≤ source
+   - original audio muxed on delivery
+   - engine uses Fun ControlNet (not depth as ref_video)
+   - render_meta in job JSON
+   - multi-ref → steps 25 (unless H3_STEPS set); single-ref → 20
+6. Cancel button smoke: queue then cancel mid-run.
+7. Deferred low-risk: Sage/cu130/bf16 DiT — only after stable Fun ControlNet outtakes.
+8. Multi-ref prompt tags: each image must appear as its own `<Picture i>` with an assigned job (face / turnaround / full-body); fixed 2026-10-14 07:12 tags + 07:45 role assignment. Verify identity lock with 3-image char pack on GPU.
+9. Optional A/B (docs wiki): for reference-heavy shots try `H3_SCHEDULER=beta` or `normal` vs default `simple`; keep `simple` unless GPU A/B shows better identity.
+11. Fun CN `end_percent` / `H3_CN_END` default **1.0** (official node + template baseline: control through full schedule). If motion locks too hard / pose artifacts or texture crush, try `H3_CN_END=0.6` (early release). Confirm `render_meta.cn_end` / `cn_strength` / `steps` / `scheduler` / `n_refs` after a GPU job.
+12. Future path (not this pass): Wan Animate 2 local motion transfer — docs.comfy.org/tutorials/video/wan/wan-animate-2 (ref image + drive video, no pose extract) as parallel engine after H3 Fun CN is GPU-proven.

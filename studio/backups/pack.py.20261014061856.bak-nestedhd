@@ -1,0 +1,503 @@
+"""云端角色/物品素材包：选 inputs 里的参考照，一键出 20/100 张，按批次存 outputs/<时间戳>/。"""
+import asyncio, json, os, re, time, zipfile
+from pathlib import Path
+from aiohttp import web
+import recipes_cloud
+import thumbs
+
+R = Path('/root/autodl-tmp'); INPUTS = R/'inputs'; OUTPUTS = R/'outputs'; ZIPS = R/'zips'
+IMG = re.compile(r'[^/\\\x00]+\.(png|jpe?g|webp)\Z', re.I)
+BATCH = re.compile(r'\d{8}-\d{6}\Z')
+FRAMES_DIR = re.compile(r'[^/\\\x00.][^/\\\x00]{0,99}\Z')
+
+def _ensure_blank(size):
+    """浅灰空白画布：只定比例，不带姿势。文件名固定，不打开用户照片。"""
+    if type(size) is not int or not 512 <= size <= 2048:
+        size = 1024
+    name = f'_blank_canvas_{size}x{size}.png'
+    path = INPUTS / name
+    if not path.is_file():
+        from PIL import Image
+        INPUTS.mkdir(parents=True, exist_ok=True)
+        Image.new('RGB', (size, size), (190, 190, 190)).save(path, format='PNG')
+    return name
+
+def _character_refs(files, size):
+    """角色模式：blank（定比例）+ 用户勾选的全部参考照（最多10，保持勾选顺序；不分析、不打开画面）。"""
+    if not files:
+        raise ValueError('请选择至少 1 张参考照片')
+    if len(files) > 10:
+        raise ValueError('一次最多使用 10 张参考照片')
+    return [_ensure_blank(size)] + [_input(f) for f in files]
+
+def _input(name):
+    if not isinstance(name, str): raise ValueError('参考照片名称无效')
+    parts = name.split('/')
+    if len(parts) == 2 and FRAMES_DIR.fullmatch(parts[0]): fname = parts[1]
+    elif len(parts) == 1: fname = name
+    else: raise ValueError('参考照片名称无效')
+    if not IMG.fullmatch(fname) or fname.startswith('.'): raise ValueError('参考照片名称无效')
+    p = INPUTS/name
+    if not p.is_file(): raise ValueError('找不到参考照片：' + name)
+    return name
+
+def _batch(name):
+    if not BATCH.fullmatch(name or ''): raise web.HTTPNotFound()
+    p = OUTPUTS/name
+    if not p.is_dir(): raise web.HTTPNotFound()
+    return p
+
+async def get_recipes(request):
+    return web.json_response({'items': recipes_cloud.recipes(request.query.get('mode'), request.query.get('kind', 'character'))})
+
+async def list_inputs(request):
+    files = []
+    if INPUTS.is_dir():
+        for p in INPUTS.iterdir():
+            if p.is_file() and IMG.fullmatch(p.name) and not p.name.startswith(('.', '_blank_canvas')): files.append((p, p.name))
+            elif p.is_dir() and FRAMES_DIR.fullmatch(p.name):
+                files += [(q, p.name + '/' + q.name) for q in p.iterdir() if q.is_file() and IMG.fullmatch(q.name)]
+    files.sort(key=lambda x: (-x[0].stat().st_mtime, x[1]))
+    return web.json_response({'files': [n for _, n in files[:1500]]})
+
+async def input_image(request):
+    name = _input(request.match_info['name']); src = INPUTS/name
+    if request.query.get('thumb') == '1':
+        return await thumbs.thumb_response(request, src, 'inputs', *name.split('/'))
+    return await thumbs.file_response(request, src, max_age=600)
+
+VARIANT_SUFFIX = {  # 内置提示词变体（不改用户保存的提示词）
+    'character': ['', '\n【身份优先】五官间距、脸型轮廓、发际线和年龄感必须与参考图中的这个人完全一致（第一张灰底画布除外的所有参考都是同一个人），皮肤保持参考中的真实质感。'],
+    'item': ['', '\n【外形优先】轮廓比例、颜色和表面材质必须与参考照片完全一致。'],
+}
+
+def _scores_path(batch): return OUTPUTS/batch/'scores.json'
+def _load_scores(batch):
+    try: return json.loads(_scores_path(batch).read_text())
+    except Exception: return {}
+def _save_scores(batch, s):
+    tmp = _scores_path(batch).with_suffix('.tmp'); tmp.write_text(json.dumps(s, ensure_ascii=False)); os.replace(tmp, _scores_path(batch))
+
+def _reject(batch, name):
+    rd = OUTPUTS/batch/'_rejected'; rd.mkdir(exist_ok=True)
+    src = OUTPUTS/batch/name
+    if src.is_file(): os.replace(src, rd/name); thumbs.drop_thumb(f'batch-{batch}', name)
+
+async def _gen_one(app, state, graph, lost_after=6):
+    """提交一张并等结果。stop → 中断并返回 False；队列里没有这个 prompt 又一直没有历史结果 → 报错退出，不无限空等。"""
+    backend = app['pack_backend']
+    res = await backend(app, 'POST', '/prompt', json={'prompt': graph})
+    pid = res['prompt_id']; state['prompt_id'] = pid
+    missing = 0; polls = 0
+    while True:
+        if state.get('stop'):
+            try: await backend(app, 'POST', '/interrupt', json={})
+            except Exception: pass
+            return False
+        await asyncio.sleep(1.5)
+        if state.get('stop'): continue
+        try: h = await backend(app, 'GET', '/history/' + pid)
+        except Exception: h = {}
+        if pid in h:
+            st = h[pid].get('status', {})
+            if st.get('status_str') == 'error':
+                if state.get('stop'): return False
+                msgs = [str(m[1].get('exception_message', '')) for m in st.get('messages', []) if m[0] == 'execution_error']
+                raise RuntimeError(msgs[-1] if msgs else '生成失败')
+            if st.get('completed'): return True
+            continue
+        polls += 1
+        if polls % 4: continue   # 约每 6 秒查一次队列
+        try:
+            q = await backend(app, 'GET', '/queue')
+            ids = {str(x[1]) for k in ('queue_running', 'queue_pending') for x in q.get(k, []) if len(x) > 1}
+        except Exception:
+            continue   # 查不到队列不算丢失
+        if pid in ids: missing = 0; continue
+        missing += 1
+        if missing >= lost_after:
+            raise RuntimeError('ComfyUI 队列里已没有这张任务，也拿不到结果（可能被清空或 ComfyUI 重启过），已停止等待')
+
+_score_lock = asyncio.Lock()
+async def _bg_score(state, scorer, scores, clips, bdir, name, ref_path, kind, row, i, src, text, variant, seed, size, thr):
+    async with _score_lock:
+        try:
+            r = await asyncio.to_thread(scorer.score, bdir/name, ref_path, kind, row.get('category', ''), list(clips))
+        except Exception as e:
+            r = {'score': None, 'method': 'unavailable', 'flags': [], 'clip': None, 'metrics': {'error': str(e)[:120]}}
+        sc = r['score']; good = sc is not None and sc >= thr and not ({'blurry', 'multiple_faces', 'near_duplicate'} & set(r['flags']))
+        rej = sc is not None and not good
+        scores[name] = {'n': i+1, 'label': row['label'], 'score': sc, 'method': r['method'], 'flags': r['flags'],
+                        'metrics': r['metrics'], 'attempt': 0, 'variant': variant, 'rejected': rej}
+        if rej:
+            try: _reject(state['batch'], name)
+            except Exception: pass
+        elif r.get('clip') is not None: clips.append(r['clip'])
+        try:
+            scorer.log(batch=state['batch'], n=i+1, label=row['label'], category=row.get('category', ''), kind=kind, prompt_src=src,
+                       prompt_hash=scorer.prompt_hash(text), variant=variant, seed=seed, size=size, attempt=0,
+                       score=sc if sc is not None else -1, method=r['method'], flags=r['flags'], accepted=good)
+        except Exception: pass
+        state['qa'] = {'name': name, 'score': sc, 'flags': r['flags']}
+        state['scored'] = state.get('scored', 0) + 1
+        state['high'] = sum(1 for v in scores.values() if not v.get('rejected') and (v.get('score') or 0) >= thr)
+        _save_scores(state['batch'], scores)
+
+async def _run(app, state, refs, size, rows, custom, kind, start_index=0):
+    import overrides
+    try:
+        import scorer
+        cfg = scorer.config(); thr = cfg['threshold']; retries = int(cfg['retries']); QA_ON = True
+    except Exception:
+        scorer = None; thr = 45; retries = 0; QA_ON = False
+    ov = None if custom else overrides.recipe_prompts(kind, state['mode'])
+    ref_path = INPUTS/(refs[1] if kind == 'character' and len(refs) > 1 else refs[0])
+    bdir = OUTPUTS/state['batch']; scores = _load_scores(state['batch']); clips = []
+    t0 = time.time(); durations = []
+    state.update(scored=0, high=0, retried=0, qa=None); bg = []
+    for i, row in enumerate(rows):
+        if i < start_index: continue
+        if state['stop']: break
+        state.update(index=i, label=row['label'])
+        src = 'custom' if custom else ('override' if ov and i < len(ov) and isinstance(ov[i], str) and ov[i].strip() else 'default')
+        nvar = len(VARIANT_SUFFIX[kind]) if src == 'default' else 1
+        start = time.time(); attempts = []
+        variant = 0 if (src != 'default' or not QA_ON) else scorer.best_variant(row['label'], kind, nvar)
+        for attempt in range(1 + retries):
+            if state['stop']: break
+            text = row['prompt'] + (VARIANT_SUFFIX[kind][variant] if src == 'default' else '')
+            graph = app['builder'].build(text, size, refs, custom, kind)
+            graph['7']['inputs']['filename_prefix'] = f"{state['batch']}/{i+1:03d}_{row['label']}"
+            seed = graph.get('5', {}).get('inputs', {}).get('seed')
+            before = set(_images(bdir))
+            try:
+                ok = await _gen_one(app, state, graph)
+            except Exception as e:
+                state.update(state='error', error=f'第 {i+1} 张失败：{str(e)[:300]}'); return
+            if not ok or state['stop']: break
+            new = sorted(set(_images(bdir)) - before)
+            if not new: break
+            name = new[-1]
+            if QA_ON and retries == 0:
+                # 并行：生成下一张的同时在 CPU 上给这张打分，不拖慢出图
+                scores[name] = {'n': i+1, 'label': row['label'], 'score': None, 'method': 'pending', 'flags': [], 'metrics': {},
+                                'attempt': 0, 'variant': variant, 'rejected': False}
+                _save_scores(state['batch'], scores)
+                bg.append(asyncio.create_task(_bg_score(state, scorer, scores, clips, bdir, name, ref_path, kind, row, i, src, text, variant, seed, size, thr)))
+                attempts = None; break
+            try:
+                if not QA_ON:
+                    r = {'score': None, 'method': 'off', 'flags': [], 'clip': None, 'metrics': {}}
+                else:
+                    r = await asyncio.to_thread(scorer.score, bdir/name, ref_path, kind, row.get('category', ''), clips)
+            except Exception as e:
+                r = {'score': None, 'method': 'unavailable', 'flags': [], 'clip': None, 'metrics': {'error': str(e)[:120]}}
+            sc = r['score']; good = sc is not None and sc >= thr and not ({'blurry', 'multiple_faces', 'near_duplicate'} & set(r['flags']))
+            attempts.append((sc if sc is not None else -1, name, r, variant, seed))
+            scores[name] = {'n': i+1, 'label': row['label'], 'score': sc, 'method': r['method'], 'flags': r['flags'],
+                            'metrics': r['metrics'], 'attempt': attempt, 'variant': variant, 'rejected': False}
+            try:
+                QA_ON and scorer.log(batch=state['batch'], n=i+1, label=row['label'], category=row.get('category', ''), kind=kind, prompt_src=src,
+                           prompt_hash=scorer.prompt_hash(text), variant=variant, seed=seed, size=size, attempt=attempt,
+                           score=sc if sc is not None else -1, method=r['method'], flags=r['flags'], accepted=good)
+            except Exception: pass
+            state['qa'] = {'name': name, 'score': sc, 'flags': r['flags']}
+            if good or sc is None: break
+            state['retried'] += 1
+            if src == 'default' and nvar > 1: variant = (variant + 1) % nvar
+        if attempts:
+            best = max(attempts, key=lambda a: a[0])
+            for sc, name, r, v, s in attempts:
+                if name != best[1] or (sc >= 0 and sc < thr):
+                    scores[name]['rejected'] = True; _reject(state['batch'], name)
+            if best[2].get('clip') is not None and not scores[best[1]]['rejected']: clips.append(best[2]['clip'])
+            state['scored'] += 1
+            state['high'] = sum(1 for v in scores.values() if not v.get('rejected') and (v.get('score') or 0) >= thr)
+            _save_scores(state['batch'], scores)
+        if state['stop']: break
+        durations.append(time.time() - start)
+        state['done'] = i + 1
+        recent = durations[-5:]
+        state['eta_s'] = round(sum(recent)/len(recent) * (len(rows) - i - 1))
+    if bg: await asyncio.gather(*bg, return_exceptions=True)
+    state['elapsed_s'] = round(time.time() - t0)
+    state.update(state='stopped' if state['stop'] else 'done', label='', eta_s=0)
+
+async def start_pack(request):
+    import train as _tr; _tr.busy(request.app)
+    app = request.app; data = await request.json()
+    cur = app.get('pack_state')
+    if cur and cur['state'] == 'running': raise ValueError('已有素材包在生成，请先等待或停止')
+    if request.app['jobs'] and any(j['state'] in ('queued', 'running') for j in request.app['jobs'].values()):
+        raise ValueError('单张生成还在进行，请稍后')
+    mode = data.get('mode'); kind = data.get('kind', 'character')
+    if kind not in ('character', 'item'): raise ValueError('模式必须是角色或物品')
+    rows = recipes_cloud.recipes(mode, kind)
+    files = data.get('files')
+    if not isinstance(files, list) or not 1 <= len(files) <= 10: raise ValueError('请选择 1–10 张参考照片')
+    size = data.get('size', 1024 if mode == 'standard' else 1536)
+    # 角色：blank + 全部勾选参考；物品：全部勾选
+    if kind == 'character':
+        refs = _character_refs(files, size)
+    else:
+        refs = [_input(f) for f in files]
+    custom = data.get('custom') is True
+    edited = data.get('prompts')
+    if custom and edited is not None:
+        if not isinstance(edited, list) or len(edited) != len(rows) or not all(isinstance(x, str) and len(x) <= 4000 for x in edited):
+            raise ValueError('自定义提示词条数或内容无效')
+        rows = [dict(r, prompt=x.strip()) for r, x in zip(rows, edited) if x.strip()]  # 只跑用户填写了的条目
+        if not rows: raise ValueError('自定义提示词已打开，请至少填写一条')
+    limit = data.get('limit')
+    if type(limit) is int and 1 <= limit < len(rows): rows = rows[:limit]
+    batch = time.strftime('%Y%m%d-%H%M%S')
+    (OUTPUTS/batch).mkdir(parents=True, exist_ok=False)
+    (OUTPUTS/batch/'batch.json').write_text(json.dumps({'mode': mode, 'size': size, 'references': refs,
+        'files': [_input(f) for f in files], 'kind': kind, 'custom': custom,
+        'items': [{'n': i+1, 'label': r['label']} for i, r in enumerate(rows)]}, ensure_ascii=False, indent=1))
+    state = {'state': 'running', 'mode': mode, 'kind': kind, 'batch': batch, 'total': len(rows), 'done': 0, 'index': 0,
+             'label': '', 'eta_s': None, 'error': None, 'stop': False, 'started': time.time()}
+    app['pack_state'] = state
+    task = asyncio.create_task(_run(app, state, refs, size, rows, custom, kind)); app['tasks'].add(task); task.add_done_callback(app['tasks'].discard)
+    return web.json_response({'batch': batch, 'total': len(rows), 'refs': len(refs), 'selected': len(files)})
+
+async def pack_status(request):
+    s = request.app.get('pack_state')
+    if not s: return web.json_response({'state': 'idle'})
+    return web.json_response({k: v for k, v in s.items() if k not in ('stop', 'prompt_id')} | {'elapsed_s': round(time.time() - s['started'])})
+
+async def stop_pack(request):
+    s = request.app.get('pack_state')
+    if s and s['state'] == 'running':
+        s['stop'] = True
+        s['stop_requested_at'] = time.time()
+        try: await request.app['pack_backend'](request.app, 'POST', '/interrupt', json={})
+        except Exception: pass
+    return web.json_response({'ok': True})
+
+async def resume_pack(request):
+    """同一批次从已完成张数继续：传 batch + 全部勾选 files（角色会加 blank）。保留已生成成品。"""
+    import train as _tr; _tr.busy(request.app)
+    app = request.app; data = await request.json()
+    cur = app.get('pack_state')
+    if cur and cur['state'] == 'running': raise ValueError('已有素材包在生成，请先等待或停止')
+    if app['jobs'] and any(j['state'] in ('queued', 'running') for j in app['jobs'].values()):
+        raise ValueError('单张生成还在进行，请稍后')
+    batch = data.get('batch')
+    if not isinstance(batch, str) or not BATCH.fullmatch(batch): raise ValueError('批次无效')
+    bdir = _batch(batch)
+    meta_path = bdir / 'batch.json'
+    if not meta_path.is_file(): raise ValueError('找不到批次信息')
+    try: meta = json.loads(meta_path.read_text())
+    except Exception: raise ValueError('批次信息损坏')
+    mode = meta.get('mode'); kind = meta.get('kind', 'character')
+    if kind not in ('character', 'item'): raise ValueError('模式必须是角色或物品')
+    size = meta.get('size', 1024 if mode == 'standard' else 1536)
+    if type(size) is not int: size = 1024 if mode == 'standard' else 1536
+    custom = bool(meta.get('custom'))
+    files = data.get('files')
+    if files is None:
+        files = meta.get('files')
+    if not isinstance(files, list) or not 1 <= len(files) <= 10:
+        raise ValueError('请传入本批要继续使用的全部参考照片（1–10 张）')
+    files = [f for f in files if isinstance(f, str) and not f.startswith('_blank_canvas_')]
+    if not 1 <= len(files) <= 10: raise ValueError('请传入本批要继续使用的全部参考照片（1–10 张）')
+    if kind == 'character':
+        refs = _character_refs(files, size)
+    else:
+        refs = [_input(f) for f in files]
+    rows = recipes_cloud.recipes(mode, kind)
+    items = meta.get('items') or []
+    if isinstance(items, list) and items and not custom:
+        by_label = {r['label']: r for r in rows}
+        rebuilt = []
+        for it in items:
+            lab = it.get('label') if isinstance(it, dict) else None
+            if lab in by_label: rebuilt.append(by_label[lab])
+            else:
+                rebuilt = None; break
+        if rebuilt is not None:
+            rows = rebuilt
+    if type(meta.get('limit')) is int and 1 <= meta['limit'] < len(rows):
+        rows = rows[:meta['limit']]
+    done = len(_images(bdir))
+    if done >= len(rows):
+        raise ValueError('本批已全部完成，无需继续')
+    meta.update({'references': refs, 'files': [_input(f) for f in files], 'resumed_from': done})
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=1))
+    state = {'state': 'running', 'mode': mode, 'kind': kind, 'batch': batch, 'total': len(rows), 'done': done, 'index': done,
+             'label': '', 'eta_s': None, 'error': None, 'stop': False, 'started': time.time(), 'resumed': True}
+    app['pack_state'] = state
+    task = asyncio.create_task(_run(app, state, refs, size, rows, custom, kind, start_index=done))
+    app['tasks'].add(task); task.add_done_callback(app['tasks'].discard)
+    return web.json_response({'batch': batch, 'total': len(rows), 'done': done, 'refs': len(refs), 'selected': len(files)})
+
+def _images(p): return sorted(f.name for f in p.iterdir() if f.suffix.lower() == '.png')
+
+async def batches(request):
+    out = []
+    if OUTPUTS.is_dir():
+        for p in sorted((p for p in OUTPUTS.iterdir() if p.is_dir() and BATCH.fullmatch(p.name)), reverse=True):
+            try: meta = json.loads((p/'batch.json').read_text()); mode, kind = meta.get('mode'), meta.get('kind')
+            except Exception: mode = kind = None
+            out.append({'batch': p.name, 'mode': mode, 'kind': kind, 'count': len(_images(p))})
+    return web.json_response({'batches': out})
+
+async def batch_files(request):
+    return web.json_response({'files': _images(_batch(request.match_info['batch']))})
+
+async def batch_file(request):
+    p = _batch(request.match_info['batch']); name = request.match_info['name']; batch = request.match_info['batch']
+    if name not in _images(p): raise web.HTTPNotFound()
+    if request.query.get('thumb') == '1':
+        return await thumbs.thumb_response(request, p/name, f'batch-{batch}', name)
+    return await thumbs.file_response(request, p/name, download=request.query.get('download')=='1',
+                                      name=f'{batch}_{name}', max_age=3600)
+
+async def batch_zip(request):
+    p = _batch(request.match_info['batch']); ZIPS.mkdir(exist_ok=True)
+    z = ZIPS/(p.name + '.zip'); names = _images(p)
+    if not z.exists() or z.stat().st_mtime < max([(p/n).stat().st_mtime for n in names] + [0]):
+        def build():
+            with zipfile.ZipFile(z, 'w', zipfile.ZIP_STORED) as f:
+                for n in names: f.write(p/n, n)
+        await asyncio.to_thread(build)
+    return web.FileResponse(z, headers={'Content-Disposition': f'attachment; filename="material-{p.name}.zip"'})
+
+
+MAX_UPLOAD = 25 * 1024 * 1024
+def _magic(data):
+    if data[:8] == b'\x89PNG\r\n\x1a\n': return {'png'}
+    if data[:3] == b'\xff\xd8\xff': return {'jpg', 'jpeg'}
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP': return {'webp'}
+    return set()
+
+async def upload_input(request):
+    """单张上传到 inputs 顶层；同名不覆盖，自动加后缀。"""
+    reader = await request.multipart(); part = await reader.next()
+    if not part or part.name != 'image': raise ValueError('请选择照片')
+    raw = Path(str(part.filename or '')).name.replace('\\', '_')
+    raw = re.sub(r'[\x00-\x1f/]', '_', raw).lstrip('.') or 'photo.jpg'
+    if not IMG.fullmatch(raw): raise ValueError('只支持 jpg/jpeg/png/webp：' + raw[:80])
+    data = bytearray()
+    while chunk := await part.read_chunk():
+        data.extend(chunk)
+        if len(data) > MAX_UPLOAD: raise ValueError('单张照片不得超过 25 MB')
+    stem, ext = raw.rsplit('.', 1)
+    if ext.lower() not in _magic(data): raise ValueError('文件内容不是有效的 jpg/png/webp：' + raw[:80])
+    INPUTS.mkdir(parents=True, exist_ok=True)
+    stem = stem[:120]
+    for n in range(0, 10000):
+        name = f'{stem}.{ext}' if n == 0 else f'{stem}_{n}.{ext}'
+        try:
+            fd = os.open(INPUTS/name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, 'wb') as f: f.write(data)
+        return web.json_response({'name': name})
+    raise ValueError('同名文件过多')
+
+def _running_batch(app):
+    s = app.get('pack_state')
+    return s['batch'] if s and s['state'] == 'running' else None
+
+async def delete_inputs(request):
+    """用户在网页上确认后删除选中的参考照片；仅限 inputs 内。"""
+    data = await request.json(); names = data.get('files')
+    if not isinstance(names, list) or not 1 <= len(names) <= 2000: raise ValueError('请选择要删除的照片')
+    if _running_batch(request.app): raise ValueError('素材包正在生成，请先停止或等待完成再删除参考照片')
+    paths = []
+    for n in names:
+        _input(n); q = (INPUTS/n).resolve()
+        if not q.is_relative_to(INPUTS.resolve()) or not q.is_file(): raise ValueError('照片位置不合法')
+        paths.append(q)
+    for n, q in zip(names, paths):
+        q.unlink(missing_ok=True)
+        thumbs.drop_thumb('inputs', *n.split('/'))
+        if q.parent != INPUTS.resolve() and q.parent.exists() and not any(q.parent.iterdir()): q.parent.rmdir()
+    return web.json_response({'deleted': len(paths)})
+
+async def delete_batch_file(request):
+    b = request.match_info['batch']; p = _batch(b); name = request.match_info['name']
+    if _running_batch(request.app) == b: raise ValueError('这个批次正在生成，不能删除')
+    if name not in _images(p): raise web.HTTPNotFound()
+    (p/name).unlink()
+    thumbs.drop_thumb(f'batch-{b}', name)
+    return web.json_response({'ok': True})
+
+async def delete_batch(request):
+    import shutil
+    b = request.match_info['batch']; p = _batch(b)
+    if _running_batch(request.app) == b: raise ValueError('这个批次正在生成，不能删除')
+    if not p.resolve().is_relative_to(OUTPUTS.resolve()) or p.resolve() == OUTPUTS.resolve(): raise ValueError('批次位置不合法')
+    shutil.rmtree(p); (ZIPS/(b + '.zip')).unlink(missing_ok=True)
+    thumbs.drop_batch(b)
+    return web.json_response({'ok': True})
+
+async def batch_scores(request):
+    b = request.match_info['batch']; _batch(b); s = _load_scores(b)
+    rd = OUTPUTS/b/'_rejected'; rej = sorted(f.name for f in rd.iterdir() if f.suffix.lower() == '.png') if rd.is_dir() else []
+    out = {k: {kk: vv for kk, vv in v.items() if kk in ('n', 'label', 'score', 'method', 'flags', 'rejected', 'attempt')} for k, v in s.items()}
+    return web.json_response({'scores': out, 'rejected': rej})
+
+async def rejected_file(request):
+    b = request.match_info['batch']; p = _batch(b)/'_rejected'; n = request.match_info['name']
+    if not p.is_dir() or n not in [f.name for f in p.iterdir() if f.suffix.lower() == '.png']: raise web.HTTPNotFound()
+    if request.query.get('thumb') == '1': return await thumbs.thumb_response(request, p/n, f'batch-{b}', '_rej_' + n)
+    return await thumbs.file_response(request, p/n, download=request.query.get('download') == '1', max_age=3600)
+
+async def restore_files(request):
+    b = request.match_info['batch']; p = _batch(b); data = await request.json(); names = data.get('names')
+    if _running_batch(request.app) == b: raise ValueError('这个批次正在生成，请稍后')
+    rd = p/'_rejected'; s = _load_scores(b); n = 0
+    if not isinstance(names, list): raise ValueError('请选择')
+    for nm in names:
+        if not isinstance(nm, str) or '/' in nm or not (rd/nm).is_file(): continue
+        dst = p/nm
+        if dst.exists(): continue
+        os.replace(rd/nm, dst); thumbs.drop_thumb(f'batch-{b}', '_rej_' + nm); n += 1
+        if nm in s: s[nm]['rejected'] = False
+    _save_scores(b, s); return web.json_response({'restored': n})
+
+async def apply_threshold(request):
+    b = request.match_info['batch']; p = _batch(b); data = await request.json()
+    if _running_batch(request.app) == b: raise ValueError('这个批次正在生成，请稍后')
+    thr = float(data.get('threshold', 45)); s = _load_scores(b); moved = back = 0
+    rd = p/'_rejected'
+    for nm, v in s.items():
+        sc = v.get('score')
+        if sc is None: continue
+        if sc < thr and (p/nm).is_file(): _reject(b, nm); v['rejected'] = True; moved += 1
+        elif sc >= thr and (rd/nm).is_file() and not (p/nm).exists() and not ({'blurry', 'multiple_faces', 'near_duplicate'} & set(v.get('flags') or [])):
+            os.replace(rd/nm, p/nm); v['rejected'] = False; back += 1
+    _save_scores(b, s); return web.json_response({'rejected': moved, 'restored': back})
+
+async def qa_config(request):
+    import scorer
+    if request.method == 'POST': return web.json_response(scorer.save_config(await request.json()))
+    return web.json_response(scorer.config())
+
+async def qa_stats(request):
+    import scorer
+    c = scorer.config()
+    try: st = scorer.stats(c['threshold'])
+    except Exception: st = {'shots': [], 'flags': {}, 'runs': 0, 'accepted': 0}
+    high = 0
+    if OUTPUTS.is_dir():
+        for bd in OUTPUTS.iterdir():
+            if bd.is_dir() and BATCH.fullmatch(bd.name):
+                for k, v in _load_scores(bd.name).items():
+                    if not v.get('rejected') and (v.get('score') or 0) >= c['threshold'] and (bd/k).is_file(): high += 1
+    st.update(high=high, train_target=c['train_target'], threshold=c['threshold'])
+    return web.json_response(st)
+
+def setup(app, backend):
+    app['pack_backend'] = backend
+    app.add_routes([web.get('/api/inputs', list_inputs), web.post('/api/inputs/upload', upload_input), web.get('/api/recipes', get_recipes), web.get('/api/inputs/{name:.+}', input_image),
+        web.post('/api/pack', start_pack), web.get('/api/pack', pack_status), web.post('/api/pack/stop', stop_pack), web.post('/api/pack/resume', resume_pack),
+        web.get('/api/batches', batches), web.get('/api/batches/{batch}', batch_files),
+        web.get('/api/batches/{batch}/files/{name}', batch_file), web.get('/api/batches/{batch}/zip', batch_zip), web.post('/api/inputs/delete', delete_inputs),
+        web.delete('/api/batches/{batch}/files/{name}', delete_batch_file), web.delete('/api/batches/{batch}', delete_batch),
+        web.get('/api/batches/{batch}/scores', batch_scores), web.get('/api/batches/{batch}/rejected/{name}', rejected_file),
+        web.post('/api/batches/{batch}/restore', restore_files), web.post('/api/batches/{batch}/threshold', apply_threshold),
+        web.get('/api/qa/config', qa_config), web.post('/api/qa/config', qa_config), web.get('/api/qa/stats', qa_stats)])

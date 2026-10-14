@@ -1,0 +1,219 @@
+"""Consume motion_preview_queue via MODULE B motion_extract_remote (SSH gate)."""
+import fcntl, json, os, re, shutil, subprocess, threading, time
+from pathlib import Path
+from worker_common import ID, atomic
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+Q = HERE / 'motion_preview_queue'
+OUT = HERE / 'outputs' / 'motion_preview'
+STATUS = HERE / 'motion_preview_worker_status.json'
+KEY = HERE / 'faceswap_probe_key'
+SSH = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=12', '-o', 'ServerAliveInterval=15',
+       '-o', 'ServerAliveCountMax=2', '-i', str(KEY), '-p', '26958', 'root@connect.westd.seetacloud.com']
+PREFIX = 'motion-extract-worker'
+ENGINE = '/root/miniconda3/bin/python /root/autodl-tmp/motion_extract/motion_extract_remote.py'
+
+class TransportError(Exception):
+    pass
+
+def rpc(action, jid='', slot='', payload=None, source=None, dest=None, timeout=120):
+    parts = [PREFIX, action] + ([jid] if jid else []) + ([slot] if slot else [])
+    command = ' '.join(parts)
+    inp = source.open('rb') if source else subprocess.PIPE
+    out = dest.open('wb') if dest else subprocess.PIPE
+    try:
+        with subprocess.Popen(SSH + [command], stdin=inp, stdout=out, stderr=subprocess.DEVNULL) as p:
+            try:
+                body = json.dumps(payload).encode() if payload is not None else None
+                b, _ = p.communicate(body, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                p.kill(); p.wait()
+                raise TransportError('预演引擎连接超时')
+            if p.returncode:
+                raise TransportError('预演引擎连接失败')
+        if dest is not None:
+            return None
+        return json.loads(b.decode() or '{}')
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        raise TransportError('预演引擎返回无效') from e
+    finally:
+        if source:
+            inp.close()
+        if dest:
+            out.close()
+
+def video_path(d):
+    import char_anim, motion_preview as mp
+    cat = mp.catalog()
+    vid = d.get('video_id')
+    if not isinstance(vid, str) or vid not in cat or cat[vid]['kind'] != 'video':
+        raise ValueError('视频编号无效')
+    p = Path(cat[vid]['path']).resolve()
+    roots = [ROOT / 'videos', HERE / 'motion_uploads']
+    if not any(p.is_relative_to(r.resolve()) for r in roots) or not p.is_file() or p.suffix.lower() not in {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'}:
+        raise ValueError('视频路径无效')
+    if (HERE / 'motion_uploads' / (vid + '.json')).exists():
+        meta = json.loads((HERE / 'motion_uploads' / (vid + '.json')).read_text(encoding='utf-8'))
+        if meta.get('owner') != d.get('owner'):
+            raise ValueError('视频归属无效')
+    return p
+
+def finish(d, p, remote):
+    outs = remote.get('outputs') or []
+    dest = OUT / d['id']
+    dest.mkdir(parents=True, exist_ok=True, mode=0o700)
+    results = []
+    mapping = [('depth', 'result-depth.mp4', 'depth'), ('gray_sil', 'result-white.mp4', 'white')]
+    wanted = []
+    if d.get('make_depth'):
+        wanted.append(mapping[0])
+    if d.get('make_white'):
+        wanted.append(mapping[1])
+    for remote_name, slot, kind in wanted:
+        name = remote_name + '.mp4'
+        if name not in outs:
+            raise ValueError('缺少预演产物')
+        if shutil.disk_usage(dest).free < 200 * 1024 ** 2:
+            raise ValueError('磁盘不足')
+        part = dest / (slot + '.part')
+        rpc('download', d['id'], name, dest=part, timeout=1800)
+        if part.stat().st_size < 32 or part.read_bytes()[4:8] != b'ftyp':
+            part.unlink(missing_ok=True)
+            raise ValueError('预演文件无效')
+        part.replace(dest / slot)
+        results.append({
+            'id': d['id'] + ':' + kind,
+            'kind': kind,
+            'slot': slot,
+            'url': '/api/motion-preview/jobs/' + d['id'] + '/results/' + slot,
+        })
+    msg = '预演完成，请勾选通过的深度/灰模后再出片'
+    if d.get('make_white'):
+        msg += '（白模：开源人体分割，新任务生效）'
+    d.update(state='done', message=msg, results=results, remote_outputs=outs)
+    for k in ('depth_backend', 'depth_model', 'depth_normalize', 'depth_engine_error', 'clay_backend', 'device', 'frames'):
+        if remote.get(k) is not None:
+            d[k] = remote.get(k)
+    atomic(p, d)
+
+def _gone(path):
+    try: return json.loads(path.read_text(encoding='utf-8')).get('state') == 'cancelled'
+    except (OSError, ValueError): return True
+
+_atomic_raw = atomic
+def atomic(path, d):
+    # never resurrect/overwrite a job the user cancelled
+    if _gone(path) and Path(path).parent == Q: return
+    _atomic_raw(path, d)
+
+def tick():
+    try:
+        probe = rpc('probe', timeout=30)
+    except TransportError:
+        return
+    for path in sorted(Q.glob('*.json'), key=lambda x: x.stat().st_mtime):
+        if not ID.fullmatch(path.stem):
+            continue
+        d = json.loads(path.read_text(encoding='utf-8'))
+        if d.get('state') in ('done', 'failed', 'cancelled'):
+            continue
+        try:
+            if not probe.get('ready'):
+                d.update(state='waiting_gpu', message='深度引擎权重未就绪，请稍后再试')
+                atomic(path, d)
+                continue
+            if d.get('state') in ('waiting_gpu', 'queued', 'staged'):
+                if not probe.get('idle') and d.get('state') != 'running':
+                    d.update(state='queued', message='预演引擎忙碌，排队中')
+                    atomic(path, d)
+                    continue
+                src = video_path(d)
+                outputs = []
+                if d.get('make_depth'):
+                    outputs.append('depth')
+                if d.get('make_white'):
+                    outputs.append('gray_sil')
+                if not outputs:
+                    raise ValueError('未选择预演类型')
+                spec = {
+                    'id': d['id'],
+                    'mode': 'cpu_depth',
+                    'outputs': outputs,
+                    'max_frames': int(os.environ.get('MOTION_PREVIEW_MAX_FRAMES', '1000000')),
+                    'max_side': int(os.environ.get('MOTION_PREVIEW_MAX_SIDE', '1920')),
+                    'input_size': int(os.environ.get('MOTION_PREVIEW_INPUT_SIZE', '518')),
+                    'synthetic': False,
+                }
+                st = rpc('init', d['id'], payload=spec, timeout=60)
+                if st.get('state') == 'waiting_gpu':
+                    d.update(state='waiting_gpu', message='已排队，需要带卡开机后再预演')
+                    atomic(path, d)
+                    continue
+                d.update(state='staging', message='正在传送参考视频到预演引擎')
+                atomic(path, d)
+                rpc('upload', d['id'], 'input.mp4', source=src, timeout=1800)
+                if _gone(path): break  # cancelled during upload
+                st = rpc('start', d['id'], timeout=60)
+                if st.get('state') == 'busy':
+                    d.update(state='queued', message='预演引擎忙碌，稍后自动重试')
+                    atomic(path, d)
+                    continue
+                d.update(state=st.get('state', 'running'), message='正在生成深度/灰模预演', remote_started=True)
+                atomic(path, d)
+            st = rpc('status', d['id'], timeout=60)
+            state = st.get('state')
+            if state == 'done':
+                finish(d, path, st)
+            elif state == 'failed':
+                err = st.get('error', 'inference_failed')
+                d.update(state='failed', message='预演失败：' + str(err)[:40])
+                atomic(path, d)
+            elif state == 'waiting_gpu':
+                d.update(state='waiting_gpu', message='已排队，需要带卡开机后再预演')
+                atomic(path, d)
+            elif state in ('running', 'starting', 'staged'):
+                frames = st.get('frames')
+                msg = '正在生成深度/灰模预演'
+                if isinstance(frames, int):
+                    msg += f'（已处理 {frames} 帧）'
+                d.update(state='running', message=msg)
+                atomic(path, d)
+            elif state == 'missing' and d.get('remote_started'):
+                d.update(state='failed', message='远端预演记录丢失，请重新提交')
+                atomic(path, d)
+            break
+        except TransportError:
+            d.update(message='预演引擎连接暂时中断，正在重连')
+            atomic(path, d)
+            break
+        except Exception:
+            d.update(state='failed', message='预演执行失败，请检查视频与磁盘后重试')
+            atomic(path, d)
+            break
+
+def main():
+    os.umask(0o077)
+    Q.mkdir(exist_ok=True, mode=0o700)
+    OUT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock = open(HERE / 'motion_preview_worker.lock', 'a')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return
+
+    def pulse():
+        while True:
+            atomic(STATUS, {'pid': os.getpid(), 'heartbeat': time.time(), 'automatic_worker': True})
+            time.sleep(5)
+
+    threading.Thread(target=pulse, daemon=True).start()
+    while True:
+        try:
+            tick()
+        except Exception:
+            pass
+        time.sleep(3)
+
+if __name__ == '__main__':
+    main()

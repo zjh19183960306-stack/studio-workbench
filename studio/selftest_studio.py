@@ -1,0 +1,30 @@
+import requests,json,time,os,subprocess,hashlib
+from pathlib import Path
+from PIL import Image,ImageDraw
+R=Path('/root/autodl-tmp');S=R/'studio';prefix='char_anim_selftest_20261013'
+img=R/'inputs'/(prefix+'.png');vid=R/'videos'/(prefix+'.mp4')
+Image.new('RGB',(64,64),(120,30,180)).save(img)
+subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','testsrc=size=64x64:rate=8','-t','1','-pix_fmt','yuv420p',str(vid)],check=True)
+session=requests.Session();base='http://127.0.0.1:6006';result={}
+result['login']=session.post(base+'/api/login',json={'password':'000000'}).status_code
+result['home']=session.get(base+'/').status_code
+data=session.get(base+'/api/char-anim/materials').json()
+i=hashlib.sha256(('image\0'+img.name).encode()).hexdigest()[:24];v=hashlib.sha256(('video\0'+vid.name).encode()).hexdigest()[:24]
+resp=session.post(base+'/api/char-anim/jobs',json={'image_ids':[i],'video_id':v});d=resp.json();jid=d['id'];result['post_status']=resp.status_code;result['default_anti_bleed']=d['anti_bleed'];result['initial_state']=d['state']
+try:
+    time.sleep(7);jobs=session.get(base+'/api/char-anim/jobs').json()['jobs'];d=next(x for x in jobs if x['id']==jid);result['worker_state']=d['state'];result['inference_started']=d['inference_started'];result['public_no_names']=img.name not in json.dumps(jobs) and vid.name not in json.dumps(jobs)
+    with session.get(base+'/api/char-anim/events',stream=True,timeout=8) as resp:
+        result['sse']=resp.status_code==200 and next(resp.iter_lines()).startswith(b'data: ')
+    old=json.loads((S/'char_anim_worker_status.json').read_text());result['heartbeat_age']=time.time()-old['heartbeat'];os.kill(old['pid'],9)
+    time.sleep(10);new=json.loads((S/'char_anim_worker_status.json').read_text());result['watchdog_respawn']=old['pid']!=new['pid'];result['heartbeat_age_after']=time.time()-new['heartbeat']
+    probe=subprocess.run(['ssh','-o','BatchMode=yes','-i',str(S/'faceswap_probe_key'),'-p','42309','root@connect.westd.seetacloud.com','char-anim-worker probe'],capture_output=True,text=True,timeout=20);result['engine_probe']=json.loads(probe.stdout)
+    denied=subprocess.run(['ssh','-o','BatchMode=yes','-i',str(S/'faceswap_probe_key'),'-p','42309','root@connect.westd.seetacloud.com','char-anim-worker shell'],capture_output=True,timeout=20);result['arbitrary_command_denied']=denied.returncode!=0
+    other=requests.Session();other.post(base+'/api/login',json={'password':'000000'});result['owner_isolation']=jid not in other.get(base+'/api/char-anim/jobs').text
+    result['public_home']=requests.get('https://bbstudio6006.serveousercontent.com',timeout=30).status_code
+finally:
+    (S/'char_anim_queue'/(jid+'.json')).unlink(missing_ok=True);img.unlink(missing_ok=True);vid.unlink(missing_ok=True)
+    # Remove only synthetic entries from persistent opaque catalog.
+    cat=json.loads((S/'char_anim_catalog.json').read_text());cat.pop(i,None);cat.pop(v,None)
+    from worker_common import atomic
+    atomic(S/'char_anim_catalog.json',cat)
+result['own_test_files_removed']=not img.exists() and not vid.exists();(S/'char_anim_selftest_evidence.json').write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result,ensure_ascii=False,indent=2))

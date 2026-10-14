@@ -1,0 +1,381 @@
+"""One-click「生成人物资产库」via local Qwen Image 2.1 reference_edit (no cloud).
+
+Stages (Douyin-style asset pack collapsed into one button):
+  1) 白底全身站姿标准图
+  2) 白底三视图（正/侧/背）
+  3) 细节角色设定图 sheet
+
+Outputs stay under outputs/CharacterAssets/ and are copied into
+inputs/人物资产/<pack>/ so they appear in 素材库 for later 勾选 as H3 refs.
+Metadata only stores filenames/status — never opens pixel content here.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import secrets
+import shutil
+import time
+from pathlib import Path
+
+from aiohttp import web
+
+R = Path("/root/autodl-tmp")
+OUT_ROOT = R / "outputs" / "CharacterAssets"
+LIB_ROOT = R / "inputs" / "人物资产"
+META_ROOT = Path(__file__).resolve().parent / "character_assets_meta"
+ID_RE = re.compile(r"[a-f0-9]{16}\Z")
+PACK_NAME_RE = re.compile(r"^[\w\u4e00-\u9fff\-]{1,80}\Z")
+
+# High-quality Chinese/English prompts for Qwen Image 2.1 edit.
+# Identity lock is also appended server-side via kind=character when custom=False.
+STAGES = [
+    {
+        "key": "01_fullbody_white",
+        "label": "白底全身站姿标准图",
+        "file": "01_白底全身站姿.png",
+        "prompt": (
+            "根据参考图中的同一人物，生成一张摄影级写实的白底全身站姿标准参考图。"
+            "要求：正面站立、双脚自然分开、双手自然垂于身侧略离开身体、头部端正看向镜头；"
+            "纯白色无缝影棚背景、均匀柔光、无投影杂讯；从头到脚完整入画、居中构图、不裁切头顶和脚；"
+            "脸型五官发型年龄身材与服装必须与参考图为同一人同一套衣服；高清锐利、皮肤与布料纹理清晰；"
+            "不要文字、水印、道具、多余人物或背景家具。"
+        ),
+    },
+    {
+        "key": "02_three_view",
+        "label": "白底三视图",
+        "file": "02_白底三视图.png",
+        "prompt": (
+            "根据参考图中的同一人物，生成一张白底全身三视图设定图："
+            "同一排从左到右为正面全身、左侧全身、背面全身，三人等高对齐、站姿中性、手臂自然下垂；"
+            "纯白背景、均匀灯光、摄影级写实；脸、发型、体型、整套服装与配饰必须与参考为同一人同一装；"
+            "画面干净、高清细节、可作角色资产；不要大段文字遮挡身体，不要水印，不要多余道具。"
+        ),
+    },
+    {
+        "key": "03_detail_sheet",
+        "label": "细节角色设定图",
+        "file": "03_细节角色设定图.png",
+        "prompt": (
+            "根据参考图中的同一人物，生成一张专业角色设定图（character design sheet）："
+            "白底干净排版，包含正面/侧面/背面全身三视图，并附人脸特写、半身服装细节、鞋履或配饰细节分镜小图；"
+            "同一人同一服装高度一致、摄影级写实、高分辨率、边缘清晰；"
+            "适合作为后续出片的人物资产；不要水印、不要无关背景、不要额外角色。"
+        ),
+    },
+]
+
+_sem = asyncio.Semaphore(1)
+
+
+def _meta_path(pid: str) -> Path:
+    return META_ROOT / (pid + ".json")
+
+
+def _atomic_write(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _load(pid: str) -> dict:
+    if not isinstance(pid, str) or not ID_RE.fullmatch(pid):
+        raise ValueError("资产包编号无效")
+    try:
+        return json.loads(_meta_path(pid).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ValueError("找不到这个人物资产包") from e
+
+
+def _public(d: dict) -> dict:
+    keys = (
+        "id",
+        "state",
+        "message",
+        "created_at",
+        "updated_at",
+        "size",
+        "model",
+        "stages",
+        "files",
+        "lib_folder",
+        "progress",
+        "total",
+        "error",
+    )
+    out = {k: d[k] for k in keys if k in d}
+    # filenames only — never include absolute media paths in API for listing
+    return out
+
+
+async def _comfy_up(app) -> bool:
+    import server as srv
+
+    try:
+        await srv.backend(app, "GET", "/system_stats")
+        return True
+    except Exception:
+        return False
+
+
+async def _run_stage(app, owner: str, description: str, size: int, refs: list, prefix: str) -> dict:
+    """Submit one Qwen reference_edit graph and wait for output images."""
+    import server as srv
+
+    srv.require_models()
+    if not await _comfy_up(app):
+        raise ValueError("本地 Qwen 模型未就绪（需要带卡开机后自动启动 ComfyUI）")
+
+    graph = app["builder"].build(
+        description, size, refs, custom=False, kind="character", use_lora=False
+    )
+    # Maximize quality slightly within reviewed sampler
+    try:
+        steps = int(graph["5"]["inputs"].get("steps") or 36)
+        graph["5"]["inputs"]["steps"] = max(steps, 40)
+    except Exception:
+        pass
+    graph["7"]["inputs"]["filename_prefix"] = prefix
+
+    client = secrets.token_hex(16)
+    result = await srv.backend(
+        app, "POST", "/prompt", json={"prompt": graph, "client_id": client}
+    )
+    if not result.get("prompt_id"):
+        raise ValueError("模型未接受任务：" + str(result)[:400])
+    pid = result["prompt_id"]
+
+    # Poll history (no websocket dependency)
+    deadline = time.time() + 900
+    while time.time() < deadline:
+        history = await srv.backend(app, "GET", "/history/" + pid)
+        if pid in history:
+            record = history[pid]
+            state = record.get("status") or {}
+            images = []
+            for node in (record.get("outputs") or {}).values():
+                for item in node.get("images") or []:
+                    if item.get("type") == "output":
+                        images.append(
+                            {
+                                "filename": srv.safe_name(item["filename"]),
+                                "subfolder": srv.safe_name(
+                                    item.get("subfolder", ""), folder=True
+                                ),
+                            }
+                        )
+            if state.get("status_str") == "error":
+                errs = [
+                    str(m[1].get("exception_message", "生成失败"))
+                    for m in state.get("messages", [])
+                    if m[0] == "execution_error"
+                ]
+                raise ValueError(errs[-1] if errs else "Qwen 生成失败")
+            if state.get("completed"):
+                if not images:
+                    raise ValueError("任务结束但没有保存图片")
+                return {"prompt_id": pid, "images": images}
+        else:
+            # still queued / running
+            await asyncio.sleep(2)
+            continue
+        await asyncio.sleep(2)
+    raise ValueError("生成超时，请稍后在人物资产列表查看或重试")
+
+
+def _copy_to_library(pack: dict, stage_key: str, image_info: dict, dest_name: str) -> str:
+    """Copy Comfy output into inputs/人物资产/<folder>/ for 素材库勾选. Returns relative lib path."""
+    sub = image_info.get("subfolder") or ""
+    src = (R / "outputs" / sub / image_info["filename"]).resolve()
+    out_root = (R / "outputs").resolve()
+    if not str(src).startswith(str(out_root)) or not src.is_file():
+        raise ValueError("找不到生成结果文件")
+    folder = pack["lib_folder"]
+    dest_dir = LIB_ROOT / folder
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / dest_name
+    if dest.exists():
+        dest = dest_dir / (dest.stem + "_" + secrets.token_hex(3) + dest.suffix)
+    shutil.copy2(src, dest)
+    rel = f"人物资产/{folder}/{dest.name}"
+    return rel
+
+
+async def _worker(app, pack_id: str) -> None:
+    pack = _load(pack_id)
+    owner = pack["owner"]
+    refs = list(pack["source_refs"])
+    size = int(pack["size"])
+    try:
+        async with _sem:
+            for i, stage in enumerate(STAGES):
+                pack["progress"] = i + 1
+                pack["message"] = f"Qwen2.1 生成中：{stage['label']}（{i+1}/{len(STAGES)}）"
+                pack["updated_at"] = time.time()
+                pack["state"] = "running"
+                _atomic_write(_meta_path(pack_id), pack)
+
+                prefix = f"CharacterAssets/{pack_id}/{stage['key']}"
+                # Chain prior outputs as extra refs for consistency (filenames with [output])
+                stage_refs = list(refs)
+                for prev in pack.get("files") or []:
+                    # prefer library path via upload-existing style: use output marker
+                    sub = prev.get("subfolder") or ""
+                    fn = prev.get("filename")
+                    if fn:
+                        out_name = f"{sub}/{fn}".strip("/") + " [output]"
+                        stage_refs.append(out_name)
+                # cap refs
+                stage_refs = stage_refs[:10]
+
+                result = await _run_stage(
+                    app, owner, stage["prompt"], size, stage_refs, prefix
+                )
+                img = result["images"][0]
+                lib_rel = _copy_to_library(pack, stage["key"], img, stage["file"])
+                entry = {
+                    "key": stage["key"],
+                    "label": stage["label"],
+                    "filename": img["filename"],
+                    "subfolder": img.get("subfolder") or "",
+                    "lib": lib_rel,
+                    "prompt_id": result["prompt_id"],
+                }
+                pack.setdefault("files", []).append(entry)
+                pack.setdefault("stages", []).append(
+                    {"key": stage["key"], "label": stage["label"], "state": "done"}
+                )
+                pack["updated_at"] = time.time()
+                _atomic_write(_meta_path(pack_id), pack)
+
+            pack["state"] = "done"
+            pack["message"] = (
+                f"人物资产库已完成（{len(pack.get('files', []))} 张），"
+                f"已写入素材库「人物资产/{pack['lib_folder']}」，可勾选作出片参考"
+            )
+            pack["updated_at"] = time.time()
+            _atomic_write(_meta_path(pack_id), pack)
+    except Exception as e:
+        pack["state"] = "error"
+        pack["error"] = str(e)[:800]
+        pack["message"] = str(e)[:800]
+        pack["updated_at"] = time.time()
+        _atomic_write(_meta_path(pack_id), pack)
+
+
+async def api_generate(request: web.Request) -> web.Response:
+    import server as srv
+
+    data = await request.json()
+    owner = request["owner"]
+    refs = srv.owned_references(app=request.app, owner=owner, values=data.get("references") or [])
+    if not refs:
+        raise ValueError("请先勾选至少一张人物参考照片")
+    size = data.get("size", 1536)
+    if type(size) is not int or not 512 <= size <= 2048 or size % 32:
+        raise ValueError("画质尺寸需为 512–2048 之间、按 32 递增的整数")
+
+    # Early GPU/Comfy check — queue still created so UI can show status
+    comfy = await _comfy_up(request.app)
+    pack_id = secrets.token_hex(8)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    lib_folder = f"{stamp}_{pack_id[:6]}"
+    pack = {
+        "id": pack_id,
+        "owner": owner,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "state": "queued" if comfy else "need_gpu",
+        "message": (
+            "已排队，即将用本地 Qwen Image 2.1 生成三件套"
+            if comfy
+            else "需要带卡开机：本地 Qwen/ComfyUI 尚未就绪，开机后点重试或重新生成"
+        ),
+        "size": size,
+        "model": "Qwen Image 2.1 (local reference_edit)",
+        "source_refs": refs,
+        "lib_folder": lib_folder,
+        "progress": 0,
+        "total": len(STAGES),
+        "files": [],
+        "stages": [{"key": s["key"], "label": s["label"], "state": "pending"} for s in STAGES],
+    }
+    META_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    LIB_ROOT.mkdir(parents=True, exist_ok=True)
+    _atomic_write(_meta_path(pack_id), pack)
+
+    if comfy:
+        srv.require_models()
+        asyncio.create_task(_worker(request.app, pack_id))
+    return web.json_response(_public(pack), status=201)
+
+
+async def api_retry(request: web.Request) -> web.Response:
+    import server as srv
+
+    pid = request.match_info["pack_id"]
+    pack = _load(pid)
+    if pack.get("owner") != request["owner"]:
+        raise web.HTTPNotFound()
+    if pack.get("state") not in ("error", "need_gpu"):
+        raise ValueError("只有失败或待开机的资产包可以重试")
+    if not await _comfy_up(request.app):
+        pack["state"] = "need_gpu"
+        pack["message"] = "仍需带卡开机后才能生成"
+        pack["updated_at"] = time.time()
+        _atomic_write(_meta_path(pid), pack)
+        return web.json_response(_public(pack))
+    srv.require_models()
+    # reset incomplete stages
+    pack["files"] = []
+    pack["stages"] = [{"key": s["key"], "label": s["label"], "state": "pending"} for s in STAGES]
+    pack["progress"] = 0
+    pack["state"] = "queued"
+    pack["message"] = "已重新排队"
+    pack["error"] = None
+    pack["updated_at"] = time.time()
+    _atomic_write(_meta_path(pid), pack)
+    asyncio.create_task(_worker(request.app, pid))
+    return web.json_response(_public(pack))
+
+
+async def api_list(request: web.Request) -> web.Response:
+    owner = request["owner"]
+    items = []
+    if META_ROOT.is_dir():
+        for p in sorted(META_ROOT.glob("*.json"), key=lambda x: -x.stat().st_mtime):
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if d.get("owner") == owner:
+                items.append(_public(d))
+    return web.json_response({"packs": items[:100], "model": "Qwen Image 2.1"})
+
+
+async def api_get(request: web.Request) -> web.Response:
+    pack = _load(request.match_info["pack_id"])
+    if pack.get("owner") != request["owner"]:
+        raise web.HTTPNotFound()
+    return web.json_response(_public(pack))
+
+
+def setup(app: web.Application) -> None:
+    META_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    LIB_ROOT.mkdir(parents=True, exist_ok=True)
+    app["character_asset_packs"] = {}
+    app.add_routes(
+        [
+            web.post("/api/character-assets/generate", api_generate),
+            web.get("/api/character-assets", api_list),
+            web.get("/api/character-assets/{pack_id}", api_get),
+            web.post("/api/character-assets/{pack_id}/retry", api_retry),
+        ]
+    )
